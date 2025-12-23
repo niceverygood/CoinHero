@@ -986,22 +986,22 @@ RSI(14): {data['rsi']:.1f}
                     pos['max_profit'] = profit_rate
                     max_profit = profit_rate
                 
-                # 2. 트레일링 스탑 - 2% 이상 수익 시 더 일찍 활성화
-                if profit_rate >= 2 and 'trailing_stop' not in pos:
-                    pos['trailing_stop'] = entry_price * 1.01  # 1% 수익 보장 시작
+                # 2. 트레일링 스탑 - 3% 이상 수익 시 활성화 (목표 3~10%)
+                if profit_rate >= 3 and 'trailing_stop' not in pos:
+                    pos['trailing_stop'] = entry_price * 1.02  # 2% 수익 보장 시작
                     print(f"[{datetime.now()}] 📊 {pos['coin_name']}: 트레일링 스탑 활성화 (수익 {profit_rate:.1f}%)")
                 
-                # 3. 수익 구간별 동적 트레일링 스탑 조정
-                if max_profit >= 2:
+                # 3. 수익 구간별 동적 트레일링 스탑 조정 (목표 3~10% 기준)
+                if max_profit >= 3:
                     # 수익률에 따라 보장 비율 증가
-                    if max_profit >= 8:
-                        protect_ratio = 0.75  # 8% 이상: 75% 보존
+                    if max_profit >= 10:
+                        protect_ratio = 0.80  # 10% 이상: 80% 보존 (8% 확보)
+                    elif max_profit >= 7:
+                        protect_ratio = 0.75  # 7% 이상: 75% 보존 (5.25% 확보)
                     elif max_profit >= 5:
-                        protect_ratio = 0.70  # 5% 이상: 70% 보존
-                    elif max_profit >= 3:
-                        protect_ratio = 0.60  # 3% 이상: 60% 보존
+                        protect_ratio = 0.70  # 5% 이상: 70% 보존 (3.5% 확보)
                     else:
-                        protect_ratio = 0.50  # 2% 이상: 50% 보존
+                        protect_ratio = 0.60  # 3% 이상: 60% 보존 (1.8% 확보)
                     
                     new_stop = entry_price * (1 + (max_profit * protect_ratio) / 100)
                     if new_stop > pos.get('trailing_stop', 0):
@@ -1074,70 +1074,70 @@ RSI(14): {data['rsi']:.1f}
             await self._execute_sell(ticker, reason, profit_rate, price)
     
     def _get_take_profit_target(self) -> float:
-        """전략별 익절 목표 (수수료 고려 상향 조정)"""
+        """전략별 익절 목표 (3~10% 범위로 상향)"""
         targets = {
-            "volatility_breakout": 5.0,   # 4% → 5%
-            "rsi_reversal": 8.0,          # 6% → 8%
-            "bollinger_bounce": 6.0,      # 5% → 6%
-            "volume_surge": 6.0,          # 5% → 6%
-            "momentum_breakout": 10.0,    # 8% → 10%
-            "scalping_5min": 3.0,         # 2% → 3%
-            # 래리 윌리엄스 전략들
-            "larry_williams_r": 5.0,      # %R 반등 후 5%
-            "larry_oops": 6.0,            # OOPS! 패턴 6%
-            "larry_smash_day": 6.0,       # Smash Day 6%
-            "larry_combo": 6.0            # 래리 종합 6% (래리 윌리엄스 권장)
+            "volatility_breakout": 6.0,   # 변동성 돌파 6%
+            "rsi_reversal": 8.0,          # RSI 반등 8%
+            "bollinger_bounce": 7.0,      # 볼린저 반등 7%
+            "volume_surge": 8.0,          # 거래량 급증 8%
+            "momentum_breakout": 10.0,    # 모멘텀 돌파 10%
+            "scalping_5min": 3.0,         # 5분 스캘핑 3% (단기)
+            # 래리 윌리엄스 전략들 (상향)
+            "larry_williams_r": 7.0,      # %R 반등 7%
+            "larry_oops": 8.0,            # OOPS! 패턴 8%
+            "larry_smash_day": 8.0,       # Smash Day 8%
+            "larry_combo": 10.0           # 래리 종합 10% (복합 전략)
         }
-        return targets.get(self.selected_strategy, 6.0)
+        return targets.get(self.selected_strategy, 7.0)
     
     def _should_auto_exit(self, rsi: float, prev_rsi: float, bb_percent: float, 
                           volume_ratio: float, profit_rate: float, pos: Dict) -> bool:
-        """전략별 자동 청산 조건 (보수적 - 수익 중심)"""
+        """전략별 자동 청산 조건 (목표 3~10% 기준)"""
         strategy = self.selected_strategy
         
-        # 최소 수익률 (수수료 고려)
-        MIN_PROFIT = 2.0
+        # 최소 수익률 (수수료 고려, 상향)
+        MIN_PROFIT = 3.0
         
         if strategy == "rsi_reversal":
-            # RSI 과매수 + 충분한 수익일 때만
-            return rsi > 75 and profit_rate >= MIN_PROFIT
+            # RSI 과매수 + 충분한 수익 (8% 목표)
+            return rsi > 75 and profit_rate >= 5
         
         elif strategy == "bollinger_bounce":
-            # 볼린저 상단 도달 + 충분한 수익
-            return bb_percent > 95 and profit_rate >= MIN_PROFIT
+            # 볼린저 상단 도달 + 충분한 수익 (7% 목표)
+            return bb_percent > 95 and profit_rate >= 4
         
         elif strategy == "volume_surge":
-            # 거래량 급감 + 충분한 수익 (더 관대하게)
-            return volume_ratio < 0.5 and profit_rate >= 3
+            # 거래량 급감 + 충분한 수익 (8% 목표)
+            return volume_ratio < 0.5 and profit_rate >= 5
         
         elif strategy == "momentum_breakout":
-            # 모멘텀 약화 + 충분한 수익
-            return (rsi < prev_rsi - 10 and bb_percent < 50) and profit_rate >= MIN_PROFIT
+            # 모멘텀 약화 + 충분한 수익 (10% 목표)
+            return (rsi < prev_rsi - 10 and bb_percent < 50) and profit_rate >= 6
         
         elif strategy == "scalping_5min":
-            # 빠른 청산이지만 최소 수익 보장
-            return profit_rate >= 2.5 or profit_rate <= -3 or (rsi > 70 and profit_rate > 1.5)
+            # 스캘핑은 빠른 청산 유지 (3% 목표)
+            return profit_rate >= 3 or profit_rate <= -3 or (rsi > 70 and profit_rate >= 2)
         
         elif strategy == "volatility_breakout":
-            # 상승 모멘텀 약화 + 충분한 수익
-            return rsi > 75 and profit_rate >= 4
+            # 상승 모멘텀 약화 + 충분한 수익 (6% 목표)
+            return rsi > 75 and profit_rate >= 5
         
-        # 래리 윌리엄스 전략들
+        # 래리 윌리엄스 전략들 (목표 7~10%)
         elif strategy == "larry_williams_r":
-            # %R이 과매수(-20 이상)로 전환 + 충분한 수익
-            return profit_rate >= 4 or (rsi > 70 and profit_rate >= MIN_PROFIT)
+            # %R이 과매수(-20 이상)로 전환 + 충분한 수익 (7% 목표)
+            return profit_rate >= 6 or (rsi > 75 and profit_rate >= 4)
         
         elif strategy == "larry_oops":
-            # OOPS 패턴 - 갭 메우기 완료 또는 충분한 수익
-            return profit_rate >= 5 or (rsi > 75 and profit_rate >= MIN_PROFIT)
+            # OOPS 패턴 - 갭 메우기 완료 또는 충분한 수익 (8% 목표)
+            return profit_rate >= 7 or (rsi > 75 and profit_rate >= 5)
         
         elif strategy == "larry_smash_day":
-            # Smash Day 반등 - RSI 회복 + 수익
-            return (rsi > 60 and profit_rate >= 4) or profit_rate >= 6
+            # Smash Day 반등 - RSI 회복 + 수익 (8% 목표)
+            return (rsi > 65 and profit_rate >= 6) or profit_rate >= 8
         
         elif strategy == "larry_combo":
-            # 종합 전략 - 래리 윌리엄스 추천 6% 또는 RSI 과매수
-            return profit_rate >= 5 or (rsi > 70 and profit_rate >= MIN_PROFIT)
+            # 종합 전략 - 10% 목표
+            return profit_rate >= 8 or (rsi > 75 and profit_rate >= 5)
         
         return False
     
