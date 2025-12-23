@@ -20,6 +20,7 @@ from ai_debate import ai_debate, EXPERTS
 from scalping_strategies import STRATEGIES, StrategyType
 from scalping_trader import scalping_trader
 from ai_scalper import ai_scalper
+from database import db
 from dataclasses import asdict
 
 app = FastAPI(
@@ -772,6 +773,43 @@ async def get_ai_decisions(limit: int = 10):
     return {
         "decisions": ai_scalper.get_ai_decisions(limit),
         "count": len(ai_scalper.ai_decisions)
+    }
+
+
+# ========== DB 통계 ==========
+
+@app.get("/api/db/status")
+async def get_db_status():
+    """DB 연결 상태"""
+    return {
+        "connected": db.is_connected(),
+        "type": "supabase" if db.is_connected() else "memory"
+    }
+
+
+@app.get("/api/db/stats")
+async def get_db_stats():
+    """거래 통계"""
+    if not db.is_connected():
+        return {"error": "DB 연결 안됨"}
+    
+    return {
+        "total_profit": db.get_total_profit(),
+        "today_trades": db.get_today_trades(),
+        "daily_stats": db.get_daily_stats(7),
+        "active_positions": db.get_active_positions()
+    }
+
+
+@app.get("/api/db/trades")
+async def get_db_trades(limit: int = 50):
+    """DB에서 거래 기록 조회"""
+    if not db.is_connected():
+        return {"trades": [], "error": "DB 연결 안됨"}
+    
+    return {
+        "trades": db.get_trades(limit),
+        "total_profit": db.get_total_profit()
     }
 
 

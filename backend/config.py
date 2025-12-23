@@ -27,3 +27,7 @@ RSI_OVERBOUGHT = 70 # RSI 과매수 기준
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
+# Supabase (DB)
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://laazktyyucltcdqhgemsz.supabase.co")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")  # service_role key 사용
+

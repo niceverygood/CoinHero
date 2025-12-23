@@ -18,6 +18,7 @@ import time
 from config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL
 from upbit_client import upbit_client
 from scalping_strategies import STRATEGIES, StrategyType
+from database import db
 
 
 # AI 모델 설정
@@ -356,16 +357,39 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
         }
     
     def _sync_existing_positions(self):
-        """기존 보유 코인을 포지션으로 동기화 (AI 매수 코인만)
+        """DB에서 활성 포지션 복구 + 업비트 잔고 확인"""
         
-        주의: 기존에 보유 중이던 코인은 동기화하지 않음
-        - 이미 큰 손실인 코인을 자동 청산하면 더 큰 손실 발생
-        - AI가 새로 매수한 코인만 관리
-        """
-        # AI 자동매매에서 매수한 코인만 관리하므로
-        # 기존 보유 코인은 동기화하지 않음
-        # 사용자가 원하면 수동으로 청산하도록 함
-        print(f"[{datetime.now()}] ℹ️ 기존 보유 코인은 AI 관리 대상에서 제외됨 (새 매수만 관리)")
+        # 1. DB에서 활성 포지션 복구
+        db_positions = db.get_active_positions()
+        if db_positions:
+            for pos in db_positions:
+                ticker = pos.get("ticker")
+                # 업비트 잔고 확인
+                currency = ticker.replace("KRW-", "") if ticker else ""
+                upbit_balance = self.client.get_balance(currency)
+                
+                if upbit_balance and upbit_balance > 0:
+                    self.positions[ticker] = {
+                        'ticker': ticker,
+                        'coin_name': pos.get("coin_name", currency),
+                        'entry_price': float(pos.get("entry_price", 0)),
+                        'amount': upbit_balance,
+                        'target_price': float(pos.get("target_price", 0)) if pos.get("target_price") else None,
+                        'stop_loss': float(pos.get("stop_loss", 0)) if pos.get("stop_loss") else None,
+                        'strategy': pos.get("strategy", ""),
+                        'entry_time': pos.get("created_at", datetime.now().isoformat()),
+                        'ai_reason': pos.get("ai_reason", ""),
+                        'max_profit': float(pos.get("max_profit", 0)) if pos.get("max_profit") else None,
+                        'trailing_stop': float(pos.get("trailing_stop", 0)) if pos.get("trailing_stop") else None
+                    }
+                    print(f"[{datetime.now()}] 🔄 포지션 복구: {currency} @ ₩{pos.get('entry_price'):,.0f}")
+                else:
+                    # 잔고 없으면 DB에서도 청산 처리
+                    db.close_position(ticker)
+            
+            print(f"[{datetime.now()}] ✅ DB에서 {len(self.positions)}개 포지션 복구 완료")
+        else:
+            print(f"[{datetime.now()}] ℹ️ 복구할 포지션 없음 (새 매수만 관리)")
     
     def stop(self) -> Dict[str, Any]:
         """자동매매 중지"""
@@ -1006,6 +1030,11 @@ RSI(14): {data['rsi']:.1f}
                     new_stop = entry_price * (1 + (max_profit * protect_ratio) / 100)
                     if new_stop > pos.get('trailing_stop', 0):
                         pos['trailing_stop'] = new_stop
+                        # DB 업데이트
+                        db.update_position(ticker, {
+                            "max_profit": max_profit,
+                            "trailing_stop": new_stop
+                        })
                         if profit_rate < max_profit - 0.5:  # 최고점 대비 0.5% 이상 하락 시에만 로그
                             print(f"[{datetime.now()}] 📈 {pos['coin_name']}: 트레일링 스탑 @ ₩{new_stop:,.0f} (최고 {max_profit:.1f}% → 현재 {profit_rate:.1f}%)")
                 
@@ -1311,7 +1340,7 @@ RSI(14): {data['rsi']:.1f}
                     'ai_reason': decision.reason
                 }
                 
-                self.trade_logs.append(TradeExecution(
+                trade_log = TradeExecution(
                     id=f"buy_{ticker}_{datetime.now().strftime('%H%M%S')}",
                     ticker=ticker,
                     coin_name=coin_name,
@@ -1323,7 +1352,12 @@ RSI(14): {data['rsi']:.1f}
                     ai_reason=decision.reason,
                     ai_confidence=decision.confidence,
                     timestamp=datetime.now().isoformat()
-                ))
+                )
+                self.trade_logs.append(trade_log)
+                
+                # DB 저장
+                db.save_trade(asdict(trade_log))
+                db.save_position(self.positions[ticker])
                 
                 print(f"[{datetime.now()}] ✅ 매수 완료: {coin_name} @ ₩{current_price:,.0f} "
                       f"(₩{invest_amount:,.0f}, 신뢰도: {decision.confidence}%)")
@@ -1380,7 +1414,7 @@ RSI(14): {data['rsi']:.1f}
                 # 실제 수익률
                 actual_profit_rate = (actual_profit / buy_total * 100) if buy_total > 0 else 0
                 
-                self.trade_logs.append(TradeExecution(
+                trade_log = TradeExecution(
                     id=f"sell_{ticker}_{datetime.now().strftime('%H%M%S')}",
                     ticker=ticker,
                     coin_name=coin_name,
@@ -1394,7 +1428,13 @@ RSI(14): {data['rsi']:.1f}
                     timestamp=datetime.now().isoformat(),
                     profit=actual_profit,
                     profit_rate=actual_profit_rate
-                ))
+                )
+                self.trade_logs.append(trade_log)
+                
+                # DB 저장 및 포지션 청산
+                db.save_trade(asdict(trade_log))
+                db.close_position(ticker)
+                db.update_daily_stats()
                 
                 emoji = "📈" if actual_profit >= 0 else "📉"
                 print(f"[{datetime.now()}] {emoji} 매도 완료: {coin_name}")
