@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv/
+.env
+
+# Node
+node_modules/
+dist/
+.pnp
+.pnp.js
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build
+build/
+*.egg-info/
+
+# Config with secrets (if any)
+.env.local
+.env.*.local
+
+# Cache
+.cache/
+.pytest_cache/
