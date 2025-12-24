@@ -26,6 +26,8 @@ class StrategyType(str, Enum):
     LARRY_OOPS = "larry_oops"                    # OOPS! 패턴
     LARRY_SMASH_DAY = "larry_smash_day"          # Smash Day 패턴
     LARRY_COMBO = "larry_combo"                  # 래리 윌리엄스 종합
+    # 수익률 최대화 전략
+    MAX_PROFIT = "max_profit"                    # 수익률 최대화
 
 
 @dataclass
@@ -143,6 +145,17 @@ STRATEGIES = {
         holding_time="1-3일",
         win_rate="60-70%",
         emoji="🏆"
+    ),
+    # 수익률 최대화 전략
+    StrategyType.MAX_PROFIT: StrategyInfo(
+        id="max_profit",
+        name="Maximum Profit",
+        name_kr="💎 수익률 최대화",
+        description="5개 지표 동시 확인 + BTC 추세 연동 + 타이트 손절(-1.5%) + 적극적 트레일링. 최고의 수익률 추구",
+        risk_level="medium",
+        holding_time="수분-수시간",
+        win_rate="65-75%",
+        emoji="💎"
     ),
 }
 

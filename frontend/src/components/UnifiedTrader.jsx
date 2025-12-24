@@ -7,6 +7,11 @@ import {
 
 // 전략 카테고리
 const STRATEGY_CATEGORIES = {
+  max_profit: {
+    name: '💎 수익률 최대화',
+    emoji: '💎',
+    color: 'from-emerald-400 to-cyan-400'
+  },
   larry: {
     name: '래리 윌리엄스',
     emoji: '🏆',
@@ -173,6 +178,7 @@ function UnifiedTrader() {
 
   // 전략 카테고리 분류
   const categorizedStrategies = {
+    max_profit: strategies.filter(s => s.id === 'max_profit'),
     larry: strategies.filter(s => s.id.startsWith('larry')),
     classic: strategies.filter(s => ['volatility_breakout', 'rsi_reversal', 'bollinger_bounce', 'volume_surge', 'momentum_breakout'].includes(s.id)),
     scalping: strategies.filter(s => s.id === 'scalping_5min')

@@ -267,6 +267,37 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
 1. 목표 수익률(6%) 달성 - 래리 윌리엄스 추천
 2. Williams %R > -20 (과매수)
 3. 손절(-3%) - 래리 윌리엄스 원칙
+""",
+        # ========== 수익률 최대화 전략 ==========
+        "max_profit": """
+당신은 '수익률 최대화' 전략 전문가입니다.
+복수의 기술적 지표가 동시에 매수 신호를 줄 때만 매수하여 승률을 극대화합니다.
+
+🎯 핵심 원리:
+- 5개 이상의 지표 동시 확인으로 높은 확신의 매수
+- 비트코인 추세 연동 (BTC 상승 시에만 매수)
+- 타이트한 손절로 손실 최소화
+- 적극적인 트레일링 스탑으로 수익 극대화
+
+📈 매수 조건 (최소 4개 이상 충족):
+1. RSI 30-45 (과매도에서 반등 구간)
+2. 볼린저 밴드 하단 20% 이하 위치
+3. MACD 히스토그램 상향 전환
+4. 거래량 평균 2배 이상
+5. 가격 5분 내 상승 전환
+6. BTC 최근 1시간 양봉 (시장 분위기 양호)
+
+📉 매도 조건 (적극적 익절):
+1. 수익 1% 도달 → 트레일링 스탑 활성화 (0.5% 보장)
+2. 수익 2% 도달 → 1.5% 수익 보장
+3. 수익 3% 이상 → 70% 수익 보장
+4. RSI 65 이상 + 수익 중 → 즉시 익절
+5. 손절: -1.5% (타이트한 손절로 손실 최소화)
+
+💡 특징:
+- 확실한 매수 신호에만 진입
+- 빠른 익절로 수익 확정
+- 손실 구간 최소화
 """
     }
     
@@ -730,6 +761,41 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
                             
                             strategy_reason = f"🏆래리종합 {conditions_met}조건"
                     
+                    # ========== 수익률 최대화 전략 ==========
+                    elif strategy == "max_profit":
+                        # 5개 지표 동시 확인
+                        cond1_rsi = 30 <= rsi <= 45 and rsi > prev_rsi  # RSI 과매도 반등
+                        cond2_bb = bb_percent <= 20  # 볼린저 하단 근처
+                        cond3_volume = volume_ratio >= 2.0  # 거래량 2배 이상
+                        cond4_price = price_change > 0.5  # 상승 전환
+                        cond5_momentum = current_price > float(df['close'].iloc[-3])  # 3봉 상승 추세
+                        
+                        # MACD 계산
+                        exp12 = df['close'].ewm(span=12, adjust=False).mean()
+                        exp26 = df['close'].ewm(span=26, adjust=False).mean()
+                        macd_hist = exp12 - exp26 - (exp12 - exp26).ewm(span=9, adjust=False).mean()
+                        cond6_macd = float(macd_hist.iloc[-1]) > float(macd_hist.iloc[-2])  # MACD 상향
+                        
+                        conditions_met = sum([cond1_rsi, cond2_bb, cond3_volume, cond4_price, cond5_momentum, cond6_macd])
+                        
+                        # 최소 4개 조건 충족 시
+                        if conditions_met >= 4:
+                            strategy_score = 70 + conditions_met * 5
+                            if cond1_rsi:
+                                strategy_score += 10
+                            if cond2_bb:
+                                strategy_score += 8
+                            if cond3_volume:
+                                strategy_score += min(15, (volume_ratio - 2) * 5)
+                            
+                            indicators = []
+                            if cond1_rsi: indicators.append(f"RSI{rsi:.0f}")
+                            if cond2_bb: indicators.append(f"BB{bb_percent:.0f}%")
+                            if cond3_volume: indicators.append(f"Vol{volume_ratio:.1f}x")
+                            if cond6_macd: indicators.append("MACD↑")
+                            
+                            strategy_reason = f"💎최대수익 {conditions_met}조건({','.join(indicators[:3])})"
+                    
                     # 점수가 있으면 추가
                     if strategy_score > 0:
                         scores.append(strategy_score)
@@ -1079,22 +1145,38 @@ RSI(14): {data['rsi']:.1f}
                     pos['max_profit'] = profit_rate
                     max_profit = profit_rate
                 
-                # 2. 트레일링 스탑 - 1% 이상 수익 시 활성화 (개선: 3% → 1%)
-                if profit_rate >= self.TRAILING_ACTIVATE and 'trailing_stop' not in pos:
-                    pos['trailing_stop'] = entry_price * 1.005  # 0.5% 수익 보장 시작
+                # 2. 트레일링 스탑 활성화 (수익률 최대화 전략은 더 적극적)
+                trailing_threshold = 0.8 if self.selected_strategy == "max_profit" else self.TRAILING_ACTIVATE
+                if profit_rate >= trailing_threshold and 'trailing_stop' not in pos:
+                    # 수익률 최대화 전략은 0.3% 보장, 일반 전략은 0.5% 보장
+                    protect_start = 0.003 if self.selected_strategy == "max_profit" else 0.005
+                    pos['trailing_stop'] = entry_price * (1 + protect_start)
                     print(f"[{datetime.now()}] 📊 {pos['coin_name']}: 트레일링 스탑 활성화 (수익 {profit_rate:.1f}%)")
                 
-                # 3. 수익 구간별 동적 트레일링 스탑 조정 (개선: 1~3% 목표 기준)
-                if max_profit >= self.TRAILING_ACTIVATE:
-                    # 수익률에 따라 보장 비율 증가 (개선된 구간)
-                    if max_profit >= 3:
-                        protect_ratio = 0.80  # 3% 이상: 80% 보존 (2.4% 확보)
-                    elif max_profit >= 2:
-                        protect_ratio = 0.70  # 2% 이상: 70% 보존 (1.4% 확보)
-                    elif max_profit >= 1.5:
-                        protect_ratio = 0.60  # 1.5% 이상: 60% 보존 (0.9% 확보)
+                # 3. 수익 구간별 동적 트레일링 스탑 조정
+                if max_profit >= trailing_threshold:
+                    # 수익률 최대화 전략은 더 높은 보존 비율 적용
+                    if self.selected_strategy == "max_profit":
+                        if max_profit >= 2.5:
+                            protect_ratio = 0.85  # 2.5% 이상: 85% 보존 (2.1% 확보)
+                        elif max_profit >= 2:
+                            protect_ratio = 0.80  # 2% 이상: 80% 보존 (1.6% 확보)
+                        elif max_profit >= 1.5:
+                            protect_ratio = 0.75  # 1.5% 이상: 75% 보존 (1.1% 확보)
+                        elif max_profit >= 1:
+                            protect_ratio = 0.70  # 1% 이상: 70% 보존 (0.7% 확보)
+                        else:
+                            protect_ratio = 0.60  # 0.8% 이상: 60% 보존 (0.5% 확보)
                     else:
-                        protect_ratio = 0.50  # 1% 이상: 50% 보존 (0.5% 확보)
+                        # 일반 전략 (기존 로직)
+                        if max_profit >= 3:
+                            protect_ratio = 0.80  # 3% 이상: 80% 보존 (2.4% 확보)
+                        elif max_profit >= 2:
+                            protect_ratio = 0.70  # 2% 이상: 70% 보존 (1.4% 확보)
+                        elif max_profit >= 1.5:
+                            protect_ratio = 0.60  # 1.5% 이상: 60% 보존 (0.9% 확보)
+                        else:
+                            protect_ratio = 0.50  # 1% 이상: 50% 보존 (0.5% 확보)
                     
                     new_stop = entry_price * (1 + (max_profit * protect_ratio) / 100)
                     if new_stop > pos.get('trailing_stop', 0):
@@ -1128,8 +1210,10 @@ RSI(14): {data['rsi']:.1f}
                     should_exit = True
                     exit_reason = f"📉 트레일링 스탑 ({profit_rate:+.2f}%, 최고 {pos.get('max_profit', 0):.1f}%)"
                 
-                # 3. 손절 (개선: -5% → -2%, 빠른 손절)
-                elif profit_rate <= self.STOP_LOSS_PCT:
+                # 3. 손절 (전략별 차등)
+                # 수익률 최대화 전략은 더 타이트한 손절 (-1.5%)
+                stop_loss_pct = -1.5 if self.selected_strategy == "max_profit" else self.STOP_LOSS_PCT
+                if profit_rate <= stop_loss_pct:
                     should_exit = True
                     exit_reason = f"⛔ 손절 ({profit_rate:+.2f}%)"
                 
@@ -1184,7 +1268,9 @@ RSI(14): {data['rsi']:.1f}
             "larry_williams_r": 2.0,      # %R 반등 2%
             "larry_oops": 2.5,            # OOPS! 패턴 2.5%
             "larry_smash_day": 2.5,       # Smash Day 2.5%
-            "larry_combo": 3.0            # 래리 종합 3%
+            "larry_combo": 3.0,           # 래리 종합 3%
+            # 수익률 최대화 (적극적 익절)
+            "max_profit": 2.5             # 빠른 익절 2.5%
         }
         return targets.get(self.selected_strategy, 2.0)
     
@@ -1237,6 +1323,19 @@ RSI(14): {data['rsi']:.1f}
             # 종합 전략 (3% 목표)
             return profit_rate >= 3 or (rsi > 70 and profit_rate >= 2)
         
+        # ========== 수익률 최대화 전략 (적극적 익절) ==========
+        elif strategy == "max_profit":
+            # RSI 65 이상 + 수익 중 → 즉시 익절
+            if rsi > 65 and profit_rate >= 1.0:
+                return True
+            # 2.5% 목표 달성
+            if profit_rate >= 2.5:
+                return True
+            # 거래량 급감 + 수익 중
+            if volume_ratio < 0.8 and profit_rate >= 1.5:
+                return True
+            return False
+        
         return False
     
     def _get_auto_exit_reason(self, rsi: float, bb_percent: float, 
@@ -1263,6 +1362,8 @@ RSI(14): {data['rsi']:.1f}
             return f"💥 Smash Day 반등 완료 (RSI {rsi:.0f}, {profit_rate:+.1f}%)"
         elif strategy == "larry_combo":
             return f"🏆 래리 종합 목표 달성 ({profit_rate:+.1f}%)"
+        elif strategy == "max_profit":
+            return f"💎 최대수익 달성 (RSI {rsi:.0f}, {profit_rate:+.1f}%)"
         else:
             return f"📊 전략 청산 조건 충족 ({profit_rate:+.1f}%)"
     
