@@ -757,6 +757,25 @@ async def stop_ai_scalping():
     return result
 
 
+@app.get("/api/ai-scalping/models")
+async def get_ai_models():
+    """사용 가능한 AI 모델 목록 조회"""
+    return ai_scalper.get_ai_models()
+
+
+@app.post("/api/ai-scalping/models/{model_key}")
+async def set_ai_model(model_key: str):
+    """AI 모델 변경"""
+    if ai_scalper.set_ai_model(model_key):
+        return {
+            "status": "success",
+            "model": model_key,
+            "info": ai_scalper.get_ai_models()
+        }
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {model_key}")
+
+
 @app.get("/api/ai-scalping/logs")
 async def get_ai_scalping_logs(limit: int = 20):
     """AI 단타 거래 기록"""

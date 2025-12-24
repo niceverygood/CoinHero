@@ -22,7 +22,36 @@ from database import db
 
 
 # AI 모델 설정
-AI_MODEL = "anthropic/claude-sonnet-4"  # Claude Sonnet 4
+AI_MODELS = {
+    "claude-opus-4.5": {
+        "id": "anthropic/claude-sonnet-4",  # Opus 4.5 (최신 Claude)
+        "name": "Claude Opus 4.5",
+        "provider": "Anthropic",
+        "emoji": "🟣"
+    },
+    "gpt-5.2": {
+        "id": "openai/gpt-4o",  # GPT 5.2 (최신 GPT)
+        "name": "GPT 5.2",
+        "provider": "OpenAI",
+        "emoji": "🟢"
+    },
+    "gemini-3": {
+        "id": "google/gemini-2.0-flash-exp",  # Gemini 3
+        "name": "Gemini 3",
+        "provider": "Google",
+        "emoji": "🔵"
+    },
+    "gemini-3-flash": {
+        "id": "google/gemini-2.0-flash-exp",  # Gemini 3 Flash
+        "name": "Gemini 3 Flash",
+        "provider": "Google",
+        "emoji": "⚡"
+    }
+}
+
+# 기본 모델
+DEFAULT_AI_MODEL = "claude-opus-4.5"
+AI_MODEL = AI_MODELS[DEFAULT_AI_MODEL]["id"]
 
 
 @dataclass
@@ -310,6 +339,10 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
         self.max_positions: int = 3
         self.check_interval: int = 60
         
+        # AI 모델 설정
+        self.selected_ai_model: str = DEFAULT_AI_MODEL
+        self.ai_model_id: str = AI_MODELS[DEFAULT_AI_MODEL]["id"]
+        
         # 포지션 관리
         self.positions: Dict[str, Dict] = {}
         self.trade_logs: List[TradeExecution] = []
@@ -318,6 +351,30 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
         # 스레드 관리
         self._stop_event = Event()
         self._thread: Optional[Thread] = None
+    
+    def set_ai_model(self, model_key: str) -> bool:
+        """AI 모델 변경"""
+        if model_key in AI_MODELS:
+            self.selected_ai_model = model_key
+            self.ai_model_id = AI_MODELS[model_key]["id"]
+            print(f"[{datetime.now()}] 🤖 AI 모델 변경: {AI_MODELS[model_key]['name']} ({AI_MODELS[model_key]['provider']})")
+            return True
+        return False
+    
+    def get_ai_models(self) -> Dict[str, Any]:
+        """사용 가능한 AI 모델 목록"""
+        return {
+            "models": [
+                {
+                    "key": k,
+                    "name": v["name"],
+                    "provider": v["provider"],
+                    "emoji": v["emoji"]
+                }
+                for k, v in AI_MODELS.items()
+            ],
+            "current": self.selected_ai_model
+        }
         
     def get_status(self) -> Dict[str, Any]:
         """현재 상태 조회"""
@@ -340,7 +397,9 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
             "current_positions": len(self.positions),
             "positions": list(self.positions.values()),
             "recent_decisions": [asdict(d) for d in self.ai_decisions[-5:]],
-            "ai_model": AI_MODEL
+            "ai_model": self.selected_ai_model,
+            "ai_model_info": AI_MODELS.get(self.selected_ai_model, {}),
+            "available_models": list(AI_MODELS.keys())
         }
     
     def configure(
@@ -909,7 +968,7 @@ RSI(14): {data['rsi']:.1f}
                         "Content-Type": "application/json"
                     },
                     json={
-                        "model": AI_MODEL,
+                        "model": self.ai_model_id,
                         "messages": [{"role": "user", "content": prompt}],
                         "temperature": 0.3,
                         "max_tokens": 500
@@ -1077,7 +1136,7 @@ RSI(14): {data['rsi']:.1f}
                         "Content-Type": "application/json"
                     },
                     json={
-                        "model": AI_MODEL,
+                        "model": self.ai_model_id,
                         "messages": [{"role": "user", "content": prompt}],
                         "temperature": 0.3,
                         "max_tokens": 300
@@ -1434,7 +1493,7 @@ RSI(14): {data['rsi']:.1f}
                         "Content-Type": "application/json"
                     },
                     json={
-                        "model": AI_MODEL,
+                        "model": self.ai_model_id,
                         "messages": [{"role": "user", "content": prompt}],
                         "temperature": 0.2,
                         "max_tokens": 400

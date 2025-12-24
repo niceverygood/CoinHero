@@ -46,7 +46,8 @@ function App() {
   const [aiSellAnalysis, setAiSellAnalysis] = useState(true);
   const [budgetLimit, setBudgetLimit] = useState(false);
   const [scannedCoins, setScannedCoins] = useState(0);
-  const [aiModel, setAiModel] = useState('claude-opus-4');
+  const [selectedAiModel, setSelectedAiModel] = useState('claude-opus-4.5');
+  const [aiModels, setAiModels] = useState([]);
   const [positions, setPositions] = useState(0);
   const [maxPositions, setMaxPositions] = useState(3);
   
@@ -98,10 +99,25 @@ function App() {
       if (data.strategies && data.strategies.length > 0) {
         setSelectedStrategies(data.strategies);
       }
+      if (data.ai_model) {
+        setSelectedAiModel(data.ai_model);
+      }
+      if (data.available_models) {
+        setAiModels(data.available_models);
+      }
     } catch (e) {
       console.error('AI 상태 조회 실패:', e);
     }
   }, []);
+
+  const changeAiModel = async (modelKey) => {
+    try {
+      await fetch(`${API_BASE}/api/ai-scalping/models/${modelKey}`, { method: 'POST' });
+      setSelectedAiModel(modelKey);
+    } catch (e) {
+      console.error('모델 변경 실패:', e);
+    }
+  };
 
   const fetchMarketPrices = useCallback(async () => {
     try {
@@ -326,12 +342,26 @@ function App() {
           <div className="flex items-start justify-between mb-6">
             {/* 좌측: AI 정보 */}
             <div className="flex items-center gap-6">
-              <div className="w-16 h-16 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-2xl flex items-center justify-center">
+              <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${
+                selectedAiModel.includes('claude') ? 'bg-gradient-to-br from-purple-500 to-violet-600' :
+                selectedAiModel.includes('gpt') ? 'bg-gradient-to-br from-green-500 to-emerald-600' :
+                'bg-gradient-to-br from-blue-500 to-cyan-600'
+              }`}>
                 <Brain className="w-8 h-8 text-white" />
               </div>
               <div>
                 <h2 className="text-xl font-bold mb-1">AI 자동매매</h2>
-                <p className="text-cyan-400 text-sm font-mono">anthropic/{aiModel}</p>
+                {/* AI 모델 선택 드롭다운 */}
+                <select 
+                  value={selectedAiModel}
+                  onChange={(e) => changeAiModel(e.target.value)}
+                  className="bg-[#252538] border border-cyan-500/30 rounded-lg px-3 py-1 text-sm text-cyan-400 font-mono cursor-pointer hover:border-cyan-500/50"
+                >
+                  <option value="claude-opus-4.5">🟣 Claude Opus 4.5</option>
+                  <option value="gpt-5.2">🟢 GPT 5.2</option>
+                  <option value="gemini-3">🔵 Gemini 3</option>
+                  <option value="gemini-3-flash">⚡ Gemini 3 Flash</option>
+                </select>
                 <div className="flex items-center gap-6 mt-2 text-sm text-gray-400">
                   <span><Activity className="w-4 h-4 inline mr-1" />{scannedCoins.toLocaleString()}개 종목</span>
                   <span><Zap className="w-4 h-4 inline mr-1" />{selectedStrategies.length}개 전략</span>
