@@ -59,7 +59,16 @@ class TradeExecution:
 
 
 class AIScalper:
-    """AI 기반 단타 자동매매"""
+    """AI 기반 단타 자동매매 - 개선된 손익비 전략"""
+    
+    # ===== 핵심 파라미터 (손익비 개선) =====
+    MIN_BUY_SCORE = 90          # 매수 최소 점수 (70 → 90)
+    MIN_AI_CONFIDENCE = 85      # AI 신뢰도 최소 (80 → 85)
+    FALLBACK_SCORE = 140        # 폴백 매수 점수 (120 → 140)
+    
+    STOP_LOSS_PCT = -2.0        # 손절선 (-5% → -2%)
+    MIN_PROFIT_EXIT = 0.8       # 최소 익절 수익률 (1.5% → 0.8%)
+    TRAILING_ACTIVATE = 1.0     # 트레일링 활성화 (3% → 1%)
     
     # 전략별 AI 프롬프트
     STRATEGY_PROMPTS = {
@@ -359,9 +368,12 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
         }
     
     def _sync_existing_positions(self):
-        """DB에서 활성 포지션 복구 + 업비트 잔고 확인"""
+        """DB에서 AI가 직접 매수한 활성 포지션만 복구 (개선: 기존 수동 보유 코인 제외)"""
         
-        # 1. DB에서 활성 포지션 복구
+        # 포지션 초기화 (기존 보유 코인 제외)
+        self.positions = {}
+        
+        # DB에서 AI가 매수한 활성 포지션만 복구
         db_positions = db.get_active_positions()
         if db_positions:
             for pos in db_positions:
@@ -370,7 +382,8 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
                 currency = ticker.replace("KRW-", "") if ticker else ""
                 upbit_balance = self.client.get_balance(currency)
                 
-                if upbit_balance and upbit_balance > 0:
+                # AI가 매수한 기록이 있고 잔고가 있는 경우만 복구
+                if upbit_balance and upbit_balance > 0 and pos.get("strategy"):
                     self.positions[ticker] = {
                         'ticker': ticker,
                         'coin_name': pos.get("coin_name", currency),
@@ -384,14 +397,41 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
                         'max_profit': float(pos.get("max_profit", 0)) if pos.get("max_profit") else None,
                         'trailing_stop': float(pos.get("trailing_stop", 0)) if pos.get("trailing_stop") else None
                     }
-                    print(f"[{datetime.now()}] 🔄 포지션 복구: {currency} @ ₩{pos.get('entry_price'):,.0f}")
+                    print(f"[{datetime.now()}] 🔄 AI 포지션 복구: {currency} @ ₩{pos.get('entry_price'):,.0f}")
                 else:
                     # 잔고 없으면 DB에서도 청산 처리
                     db.close_position(ticker)
             
-            print(f"[{datetime.now()}] ✅ DB에서 {len(self.positions)}개 포지션 복구 완료")
+            print(f"[{datetime.now()}] ✅ AI 포지션 {len(self.positions)}개 복구 (수동 보유 코인 제외)")
         else:
-            print(f"[{datetime.now()}] ℹ️ 복구할 포지션 없음 (새 매수만 관리)")
+            print(f"[{datetime.now()}] ℹ️ 복구할 AI 포지션 없음 (새 매수만 관리)")
+    
+    def _check_btc_trend(self) -> float:
+        """비트코인 추세 확인 (개선: 시장 상황 체크)"""
+        try:
+            df = self.client.get_ohlcv("KRW-BTC", interval="minute15", count=20)
+            if df is None or len(df) < 10:
+                return 0  # 데이터 없으면 중립
+            
+            # 최근 1시간 추세 (4개 15분봉)
+            recent_close = float(df['close'].iloc[-1])
+            hour_ago_close = float(df['close'].iloc[-4]) if len(df) >= 4 else recent_close
+            
+            btc_change = (recent_close - hour_ago_close) / hour_ago_close * 100
+            
+            # RSI 계산
+            delta = df['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            btc_rsi = float((100 - (100 / (1 + rs))).iloc[-1])
+            
+            print(f"[{datetime.now()}] 📊 BTC 추세: {btc_change:+.2f}% (RSI: {btc_rsi:.0f})")
+            
+            return btc_change
+        except Exception as e:
+            print(f"[{datetime.now()}] ⚠️ BTC 추세 확인 실패: {e}")
+            return 0
     
     def stop(self) -> Dict[str, Any]:
         """자동매매 중지"""
@@ -450,7 +490,17 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
         print(f"[{datetime.now()}] 🛑 AI 단타 종료")
     
     async def _analyze_and_trade(self):
-        """AI 분석 및 거래"""
+        """AI 분석 및 거래 (개선: BTC 추세 체크)"""
+        # 0. 비트코인 추세 확인 (개선: 시장 상황 체크)
+        btc_trend = self._check_btc_trend()
+        
+        # BTC 급락 시 (-1% 이상) 매수 중단
+        if btc_trend < -1:
+            print(f"[{datetime.now()}] ⚠️ BTC 하락 중 ({btc_trend:+.2f}%) - 매수 보류")
+            # 청산 체크만 진행
+            await self._check_exit_positions()
+            return
+        
         # 1. 전체 코인 스캔하여 후보 선정
         candidates = await self._scan_candidates()
         
@@ -458,13 +508,13 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
             print(f"[{datetime.now()}] 📊 스캔 완료: 후보 코인 없음")
             return
         
-        print(f"[{datetime.now()}] 📊 스캔 완료: {len(candidates)}개 후보")
+        print(f"[{datetime.now()}] 📊 스캔 완료: {len(candidates)}개 후보 (BTC: {btc_trend:+.2f}%)")
         
         # 2. 기존 포지션 청산 체크
         await self._check_exit_positions()
         
-        # 3. 새 진입 (최대 포지션 미만일 때)
-        if len(self.positions) < self.max_positions:
+        # 3. 새 진입 (최대 포지션 미만일 때, BTC 추세 양호할 때만)
+        if len(self.positions) < self.max_positions and btc_trend >= -0.5:
             for ticker, data in candidates[:3]:  # 상위 3개만 AI 분석
                 if ticker in self.positions:
                     continue
@@ -472,13 +522,13 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
                 # AI 분석 시도
                 decision = await self._ai_analyze(ticker, data, "entry")
                 
-                # AI 분석 성공 시
-                if decision and decision.action == "buy" and decision.confidence >= 80:
+                # AI 분석 성공 시 (개선: 신뢰도 85% 이상)
+                if decision and decision.action == "buy" and decision.confidence >= self.MIN_AI_CONFIDENCE:
                     await self._execute_buy(ticker, decision)
                     print(f"[{datetime.now()}] 🎯 AI 매수 결정: {ticker} (신뢰도 {decision.confidence}%)")
                     
-                # AI 분석 실패 시 점수 기반 매수 (폴백)
-                elif decision is None and data.get('score', 0) >= 120:
+                # AI 분석 실패 시 점수 기반 매수 (폴백, 개선: 140점 이상)
+                elif decision is None and data.get('score', 0) >= self.FALLBACK_SCORE:
                     # 점수가 매우 높으면 규칙 기반으로 매수
                     fallback_decision = AITradeDecision(
                         ticker=ticker,
@@ -693,8 +743,8 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
                     score = 0
                     reason = ""
                 
-                # 점수 70 이상인 코인만 후보로 (더 엄격한 기준)
-                if score >= 70:
+                # 점수 90 이상인 코인만 후보로 (개선: 더 엄격한 기준)
+                if score >= self.MIN_BUY_SCORE:
                     coin_name = ticker.replace("KRW-", "")
                     candidates.append((ticker, {
                         'coin_name': coin_name,
@@ -998,12 +1048,12 @@ RSI(14): {data['rsi']:.1f}
             return None
     
     async def _check_exit_positions(self):
-        """포지션 청산 체크 - 수익 중심 보수적 청산"""
+        """포지션 청산 체크 - 개선된 손익비 전략"""
         positions_to_close = []
         
-        # 수수료 고려 최소 수익률 (매수 0.05% + 매도 0.05% = 0.1%)
-        MIN_PROFIT_FOR_EXIT = 1.5  # 최소 1.5% 수익이어야 익절
-        MIN_HOLDING_SECONDS = 300  # 최소 5분 보유
+        # 수수료 고려 최소 수익률 (개선: 0.8%)
+        MIN_PROFIT_FOR_EXIT = self.MIN_PROFIT_EXIT
+        MIN_HOLDING_SECONDS = 180  # 최소 3분 보유 (5분 → 3분)
         
         for ticker, pos in list(self.positions.items()):
             try:
@@ -1029,22 +1079,22 @@ RSI(14): {data['rsi']:.1f}
                     pos['max_profit'] = profit_rate
                     max_profit = profit_rate
                 
-                # 2. 트레일링 스탑 - 3% 이상 수익 시 활성화 (목표 3~10%)
-                if profit_rate >= 3 and 'trailing_stop' not in pos:
-                    pos['trailing_stop'] = entry_price * 1.02  # 2% 수익 보장 시작
+                # 2. 트레일링 스탑 - 1% 이상 수익 시 활성화 (개선: 3% → 1%)
+                if profit_rate >= self.TRAILING_ACTIVATE and 'trailing_stop' not in pos:
+                    pos['trailing_stop'] = entry_price * 1.005  # 0.5% 수익 보장 시작
                     print(f"[{datetime.now()}] 📊 {pos['coin_name']}: 트레일링 스탑 활성화 (수익 {profit_rate:.1f}%)")
                 
-                # 3. 수익 구간별 동적 트레일링 스탑 조정 (목표 3~10% 기준)
-                if max_profit >= 3:
-                    # 수익률에 따라 보장 비율 증가
-                    if max_profit >= 10:
-                        protect_ratio = 0.80  # 10% 이상: 80% 보존 (8% 확보)
-                    elif max_profit >= 7:
-                        protect_ratio = 0.75  # 7% 이상: 75% 보존 (5.25% 확보)
-                    elif max_profit >= 5:
-                        protect_ratio = 0.70  # 5% 이상: 70% 보존 (3.5% 확보)
+                # 3. 수익 구간별 동적 트레일링 스탑 조정 (개선: 1~3% 목표 기준)
+                if max_profit >= self.TRAILING_ACTIVATE:
+                    # 수익률에 따라 보장 비율 증가 (개선된 구간)
+                    if max_profit >= 3:
+                        protect_ratio = 0.80  # 3% 이상: 80% 보존 (2.4% 확보)
+                    elif max_profit >= 2:
+                        protect_ratio = 0.70  # 2% 이상: 70% 보존 (1.4% 확보)
+                    elif max_profit >= 1.5:
+                        protect_ratio = 0.60  # 1.5% 이상: 60% 보존 (0.9% 확보)
                     else:
-                        protect_ratio = 0.60  # 3% 이상: 60% 보존 (1.8% 확보)
+                        protect_ratio = 0.50  # 1% 이상: 50% 보존 (0.5% 확보)
                     
                     new_stop = entry_price * (1 + (max_profit * protect_ratio) / 100)
                     if new_stop > pos.get('trailing_stop', 0):
@@ -1057,9 +1107,9 @@ RSI(14): {data['rsi']:.1f}
                         if profit_rate < max_profit - 0.5:  # 최고점 대비 0.5% 이상 하락 시에만 로그
                             print(f"[{datetime.now()}] 📈 {pos['coin_name']}: 트레일링 스탑 @ ₩{new_stop:,.0f} (최고 {max_profit:.1f}% → 현재 {profit_rate:.1f}%)")
                 
-                # 4. 급격한 수익 감소 감지 (최고점 대비 40% 이상 하락)
+                # 4. 급격한 수익 감소 감지 (개선: 최고점 대비 50% 이상 하락 시 청산)
                 profit_drawdown = max_profit - profit_rate
-                if max_profit >= 3 and profit_drawdown >= max_profit * 0.4 and profit_rate >= MIN_PROFIT_FOR_EXIT:
+                if max_profit >= 1.0 and profit_drawdown >= max_profit * 0.5 and profit_rate >= MIN_PROFIT_FOR_EXIT:
                     positions_to_close.append((ticker, f"📉 수익 급감 익절 ({profit_rate:+.2f}%, 최고 {max_profit:.1f}%에서 하락)", profit_rate, current_price))
                     continue
                 
@@ -1078,18 +1128,18 @@ RSI(14): {data['rsi']:.1f}
                     should_exit = True
                     exit_reason = f"📉 트레일링 스탑 ({profit_rate:+.2f}%, 최고 {pos.get('max_profit', 0):.1f}%)"
                 
-                # 3. 큰 손실 손절 (-5% 이상, 즉시)
-                elif profit_rate <= -5:
+                # 3. 손절 (개선: -5% → -2%, 빠른 손절)
+                elif profit_rate <= self.STOP_LOSS_PCT:
                     should_exit = True
                     exit_reason = f"⛔ 손절 ({profit_rate:+.2f}%)"
                 
-                # 4. 장시간 보유 후 소폭 수익이면 청산 (30분 이상, 1.5% 이상)
-                elif holding_seconds >= 1800 and profit_rate >= MIN_PROFIT_FOR_EXIT:
+                # 4. 장시간 보유 후 소폭 수익이면 청산 (개선: 20분 이상, 0.8% 이상)
+                elif holding_seconds >= 1200 and profit_rate >= MIN_PROFIT_FOR_EXIT:
                     should_exit = True
                     exit_reason = f"⏰ 시간 기반 익절 ({profit_rate:+.2f}%, {holding_seconds/60:.0f}분 보유)"
                 
-                # 5. AI 분석 (10분 이상 보유 & 3% 이상 수익/손실)
-                if not should_exit and holding_seconds >= 600 and abs(profit_rate) >= 3:
+                # 5. AI 분석 (개선: 5분 이상 보유 & 1.5% 이상 수익/손실)
+                if not should_exit and holding_seconds >= 300 and abs(profit_rate) >= 1.5:
                     df = self.client.get_ohlcv(ticker, interval="day", count=25)
                     if df is not None and len(df) >= 21:
                         # RSI 계산
@@ -1099,12 +1149,12 @@ RSI(14): {data['rsi']:.1f}
                         rs = gain / loss
                         rsi = float((100 - (100 / (1 + rs))).iloc[-1])
                         
-                        # 수익 중이고 RSI 과매수면 익절
-                        if profit_rate >= MIN_PROFIT_FOR_EXIT and rsi >= 75:
+                        # 수익 중이고 RSI 과매수면 익절 (개선: 70 이상)
+                        if profit_rate >= MIN_PROFIT_FOR_EXIT and rsi >= 70:
                             should_exit = True
                             exit_reason = f"📊 RSI 과매수 익절 (RSI {rsi:.0f}, {profit_rate:+.2f}%)"
                         # 손실 중이고 RSI 과매도면 더 기다림 (반등 기대)
-                        elif profit_rate < 0 and rsi <= 25:
+                        elif profit_rate < 0 and rsi <= 30:
                             print(f"[{datetime.now()}] ⏳ {pos['coin_name']}: RSI 과매도 - 반등 대기 (RSI {rsi:.0f})")
                 
                 if should_exit:
@@ -1122,70 +1172,70 @@ RSI(14): {data['rsi']:.1f}
             await self._execute_sell(ticker, reason, profit_rate, price)
     
     def _get_take_profit_target(self) -> float:
-        """전략별 익절 목표 (3~10% 범위로 상향)"""
+        """전략별 익절 목표 (개선: 1.5~3% 현실적 범위)"""
         targets = {
-            "volatility_breakout": 6.0,   # 변동성 돌파 6%
-            "rsi_reversal": 8.0,          # RSI 반등 8%
-            "bollinger_bounce": 7.0,      # 볼린저 반등 7%
-            "volume_surge": 8.0,          # 거래량 급증 8%
-            "momentum_breakout": 10.0,    # 모멘텀 돌파 10%
-            "scalping_5min": 3.0,         # 5분 스캘핑 3% (단기)
-            # 래리 윌리엄스 전략들 (상향)
-            "larry_williams_r": 7.0,      # %R 반등 7%
-            "larry_oops": 8.0,            # OOPS! 패턴 8%
-            "larry_smash_day": 8.0,       # Smash Day 8%
-            "larry_combo": 10.0           # 래리 종합 10% (복합 전략)
+            "volatility_breakout": 2.0,   # 변동성 돌파 2%
+            "rsi_reversal": 2.5,          # RSI 반등 2.5%
+            "bollinger_bounce": 2.0,      # 볼린저 반등 2%
+            "volume_surge": 2.5,          # 거래량 급증 2.5%
+            "momentum_breakout": 3.0,     # 모멘텀 돌파 3%
+            "scalping_5min": 1.5,         # 5분 스캘핑 1.5%
+            # 래리 윌리엄스 전략들 (현실화)
+            "larry_williams_r": 2.0,      # %R 반등 2%
+            "larry_oops": 2.5,            # OOPS! 패턴 2.5%
+            "larry_smash_day": 2.5,       # Smash Day 2.5%
+            "larry_combo": 3.0            # 래리 종합 3%
         }
-        return targets.get(self.selected_strategy, 7.0)
+        return targets.get(self.selected_strategy, 2.0)
     
     def _should_auto_exit(self, rsi: float, prev_rsi: float, bb_percent: float, 
                           volume_ratio: float, profit_rate: float, pos: Dict) -> bool:
-        """전략별 자동 청산 조건 (목표 3~10% 기준)"""
+        """전략별 자동 청산 조건 (개선: 1.5~3% 목표 기준)"""
         strategy = self.selected_strategy
         
-        # 최소 수익률 (수수료 고려, 상향)
-        MIN_PROFIT = 3.0
+        # 최소 수익률 (개선: 0.8%)
+        MIN_PROFIT = self.MIN_PROFIT_EXIT
         
         if strategy == "rsi_reversal":
-            # RSI 과매수 + 충분한 수익 (8% 목표)
-            return rsi > 75 and profit_rate >= 5
+            # RSI 과매수 + 수익 (2.5% 목표)
+            return rsi > 70 and profit_rate >= 1.5
         
         elif strategy == "bollinger_bounce":
-            # 볼린저 상단 도달 + 충분한 수익 (7% 목표)
-            return bb_percent > 95 and profit_rate >= 4
+            # 볼린저 상단 도달 + 수익 (2% 목표)
+            return bb_percent > 90 and profit_rate >= 1.2
         
         elif strategy == "volume_surge":
-            # 거래량 급감 + 충분한 수익 (8% 목표)
-            return volume_ratio < 0.5 and profit_rate >= 5
+            # 거래량 급감 + 수익 (2.5% 목표)
+            return volume_ratio < 0.7 and profit_rate >= 1.5
         
         elif strategy == "momentum_breakout":
-            # 모멘텀 약화 + 충분한 수익 (10% 목표)
-            return (rsi < prev_rsi - 10 and bb_percent < 50) and profit_rate >= 6
+            # 모멘텀 약화 + 수익 (3% 목표)
+            return (rsi < prev_rsi - 5 and bb_percent < 60) and profit_rate >= 2
         
         elif strategy == "scalping_5min":
-            # 스캘핑은 빠른 청산 유지 (3% 목표)
-            return profit_rate >= 3 or profit_rate <= -3 or (rsi > 70 and profit_rate >= 2)
+            # 스캘핑 빠른 청산 (1.5% 목표, 개선: 손절 -2%)
+            return profit_rate >= 1.5 or profit_rate <= self.STOP_LOSS_PCT or (rsi > 65 and profit_rate >= 1)
         
         elif strategy == "volatility_breakout":
-            # 상승 모멘텀 약화 + 충분한 수익 (6% 목표)
-            return rsi > 75 and profit_rate >= 5
+            # 상승 모멘텀 약화 + 수익 (2% 목표)
+            return rsi > 70 and profit_rate >= 1.5
         
-        # 래리 윌리엄스 전략들 (목표 7~10%)
+        # 래리 윌리엄스 전략들 (개선: 2~3% 목표)
         elif strategy == "larry_williams_r":
-            # %R이 과매수(-20 이상)로 전환 + 충분한 수익 (7% 목표)
-            return profit_rate >= 6 or (rsi > 75 and profit_rate >= 4)
+            # %R 과매수 전환 + 수익 (2% 목표)
+            return profit_rate >= 2 or (rsi > 70 and profit_rate >= 1.2)
         
         elif strategy == "larry_oops":
-            # OOPS 패턴 - 갭 메우기 완료 또는 충분한 수익 (8% 목표)
-            return profit_rate >= 7 or (rsi > 75 and profit_rate >= 5)
+            # OOPS 패턴 (2.5% 목표)
+            return profit_rate >= 2.5 or (rsi > 70 and profit_rate >= 1.5)
         
         elif strategy == "larry_smash_day":
-            # Smash Day 반등 - RSI 회복 + 수익 (8% 목표)
-            return (rsi > 65 and profit_rate >= 6) or profit_rate >= 8
+            # Smash Day 반등 (2.5% 목표)
+            return (rsi > 60 and profit_rate >= 2) or profit_rate >= 2.5
         
         elif strategy == "larry_combo":
-            # 종합 전략 - 10% 목표
-            return profit_rate >= 8 or (rsi > 75 and profit_rate >= 5)
+            # 종합 전략 (3% 목표)
+            return profit_rate >= 3 or (rsi > 70 and profit_rate >= 2)
         
         return False
     
