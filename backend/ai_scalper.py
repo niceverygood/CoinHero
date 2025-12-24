@@ -54,6 +54,8 @@ class TradeExecution:
     timestamp: str
     profit: Optional[float] = None
     profit_rate: Optional[float] = None
+    buy_price: Optional[float] = None      # 매수 단가
+    buy_total: Optional[float] = None      # 매수 총액
 
 
 class AIScalper:
@@ -467,15 +469,32 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
                 if ticker in self.positions:
                     continue
                 
-                # AI 분석 (신뢰도 80% 이상에서만 매수)
+                # AI 분석 시도
                 decision = await self._ai_analyze(ticker, data, "entry")
                 
+                # AI 분석 성공 시
                 if decision and decision.action == "buy" and decision.confidence >= 80:
                     await self._execute_buy(ticker, decision)
-                    print(f"[{datetime.now()}] 🎯 매수 결정: {ticker} (신뢰도 {decision.confidence}%)")
+                    print(f"[{datetime.now()}] 🎯 AI 매수 결정: {ticker} (신뢰도 {decision.confidence}%)")
                     
-                    if len(self.positions) >= self.max_positions:
-                        break
+                # AI 분석 실패 시 점수 기반 매수 (폴백)
+                elif decision is None and data.get('score', 0) >= 120:
+                    # 점수가 매우 높으면 규칙 기반으로 매수
+                    fallback_decision = AITradeDecision(
+                        ticker=ticker,
+                        action="buy",
+                        confidence=75,
+                        amount_percent=50,
+                        reason=f"규칙기반 매수: {data.get('reason', '')} (점수 {data.get('score', 0):.0f})",
+                        target_price=data.get('price', 0) * 1.05,
+                        stop_loss=data.get('price', 0) * 0.97,
+                        timestamp=datetime.now().isoformat()
+                    )
+                    await self._execute_buy(ticker, fallback_decision)
+                    print(f"[{datetime.now()}] 🎯 규칙 기반 매수: {ticker} (점수 {data.get('score', 0):.0f})")
+                    
+                if len(self.positions) >= self.max_positions:
+                    break
     
     async def _scan_candidates(self) -> List[tuple]:
         """전체 KRW 마켓 코인 스캔 - 선택한 전략에 맞는 코인 탐색"""
@@ -1427,7 +1446,9 @@ RSI(14): {data['rsi']:.1f}
                     ai_confidence=0,
                     timestamp=datetime.now().isoformat(),
                     profit=actual_profit,
-                    profit_rate=actual_profit_rate
+                    profit_rate=actual_profit_rate,
+                    buy_price=entry_price,
+                    buy_total=buy_total
                 )
                 self.trade_logs.append(trade_log)
                 

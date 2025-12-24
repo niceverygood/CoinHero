@@ -254,20 +254,40 @@ function App() {
                       
                       {/* 수익/손실 (매도 시) */}
                       {!isBuy && trade.profit_rate !== undefined && (
-                        <div className={`flex items-center gap-2 mt-2 p-2 rounded-lg ${
-                          trade.profit_rate >= 0 ? 'bg-green-500/10' : 'bg-red-500/10'
+                        <div className={`mt-2 p-3 rounded-lg ${
+                          trade.profit_rate >= 0 ? 'bg-green-500/10 border border-green-500/30' : 'bg-red-500/10 border border-red-500/30'
                         }`}>
-                          <span className={`text-sm font-bold ${
-                            trade.profit_rate >= 0 ? 'text-green-400' : 'text-red-400'
+                          {/* 매수/매도 금액 비교 */}
+                          <div className="flex justify-between items-center text-xs text-gray-400 mb-2">
+                            <span>매수: ₩{trade.buy_price?.toLocaleString()} × {trade.amount?.toFixed(4)}개</span>
+                            <span>= ₩{trade.buy_total?.toLocaleString()}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-xs text-gray-400 mb-2">
+                            <span>매도: ₩{trade.price?.toLocaleString()} × {trade.amount?.toFixed(4)}개</span>
+                            <span>= ₩{trade.total_krw?.toLocaleString()}</span>
+                          </div>
+                          {/* 손익 표시 */}
+                          <div className={`flex items-center justify-between pt-2 border-t ${
+                            trade.profit_rate >= 0 ? 'border-green-500/30' : 'border-red-500/30'
                           }`}>
-                            {trade.profit_rate >= 0 ? '📈' : '📉'} 
-                            {trade.profit_rate >= 0 ? '+' : ''}{trade.profit_rate?.toFixed(2)}%
-                          </span>
-                          <span className={`text-sm ${
-                            trade.profit >= 0 ? 'text-green-400' : 'text-red-400'
-                          }`}>
-                            ({trade.profit >= 0 ? '+' : ''}₩{trade.profit?.toLocaleString()})
-                          </span>
+                            <span className={`text-lg font-bold ${
+                              trade.profit_rate >= 0 ? 'text-green-400' : 'text-red-400'
+                            }`}>
+                              {trade.profit_rate >= 0 ? '📈 수익' : '📉 손실'}
+                            </span>
+                            <div className="text-right">
+                              <span className={`text-lg font-bold ${
+                                trade.profit >= 0 ? 'text-green-400' : 'text-red-400'
+                              }`}>
+                                {trade.profit >= 0 ? '+' : ''}₩{Math.abs(trade.profit || 0).toLocaleString()}
+                              </span>
+                              <span className={`ml-2 text-sm ${
+                                trade.profit_rate >= 0 ? 'text-green-400' : 'text-red-400'
+                              }`}>
+                                ({trade.profit_rate >= 0 ? '+' : ''}{trade.profit_rate?.toFixed(2)}%)
+                              </span>
+                            </div>
+                          </div>
                         </div>
                       )}
                       
