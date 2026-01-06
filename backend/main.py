@@ -1139,15 +1139,18 @@ async def get_stats_summary(start_date: Optional[str] = None, end_date: Optional
 
 if __name__ == "__main__":
     import uvicorn
+    import os
+    # Railway는 PORT 환경변수 사용, 로컬은 BACKEND_PORT 사용
+    port = int(os.getenv("PORT", BACKEND_PORT))
     print(f"""
 ╔═══════════════════════════════════════════╗
 ║                                           ║
 ║     🚀 CoinHero 자동거래 시스템 🚀        ║
 ║                                           ║
-║     API Server: http://localhost:{BACKEND_PORT}      ║
-║     Docs: http://localhost:{BACKEND_PORT}/docs       ║
+║     API Server: http://localhost:{port}      ║
+║     Docs: http://localhost:{port}/docs       ║
 ║                                           ║
 ╚═══════════════════════════════════════════╝
     """)
-    uvicorn.run(app, host="0.0.0.0", port=BACKEND_PORT)
+    uvicorn.run(app, host="0.0.0.0", port=port)
 
