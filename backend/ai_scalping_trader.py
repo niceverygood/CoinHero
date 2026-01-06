@@ -20,7 +20,7 @@ from scalping_strategies import (
 )
 
 # OpenRouter API 설정
-OPENROUTER_API_KEY = "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"
+from config import OPENROUTER_API_KEY
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # AI 모델
