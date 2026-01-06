@@ -91,9 +91,9 @@ class AIScalper:
     """AI 기반 단타 자동매매 - 개선된 손익비 전략"""
     
     # ===== 핵심 파라미터 (손익비 개선) =====
-    MIN_BUY_SCORE = 90          # 매수 최소 점수 (70 → 90)
-    MIN_AI_CONFIDENCE = 85      # AI 신뢰도 최소 (80 → 85)
-    FALLBACK_SCORE = 140        # 폴백 매수 점수 (120 → 140)
+    MIN_BUY_SCORE = 80          # 매수 최소 점수 (90 → 80)
+    MIN_AI_CONFIDENCE = 75      # AI 신뢰도 최소 (85 → 75)
+    FALLBACK_SCORE = 100        # 폴백 매수 점수 (140 → 100)
     
     STOP_LOSS_PCT = -2.0        # 손절선 (-5% → -2%)
     MIN_PROFIT_EXIT = 0.8       # 최소 익절 수익률 (1.5% → 0.8%)
@@ -159,23 +159,29 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
 3. 손절선(-3%) 도달
 """,
         "volume_surge": """
-당신은 '거래량 급증' 전략 전문가입니다.
-거래량 폭발을 동반한 추세 추종 전략으로 매매합니다.
+당신은 '거래량 돌파' 전략 전문가입니다. 백테스트에서 +9.11% 수익률로 1위를 기록한 검증된 전략입니다.
 
 핵심 원리:
-- 거래량은 가격에 선행한다
-- 평균 거래량 3배 이상 급증 + 양봉 = 강한 매수 신호
-- 급등 초기에 진입, 거래량 감소 시 청산
+- 거래량은 가격에 선행한다 (거래량 → 가격 움직임)
+- 평균 거래량 2배 이상 급증 + 가격 상승 = 강력한 매수 신호
+- 급등 초기에 진입, 빠르게 수익 실현
 
-매수 조건:
-1. 거래량 > 평균 × 3 (급증)
-2. 양봉 (종가 > 시가)
-3. 가격 상승률 2% 이상
+매수 조건 (필수):
+1. 거래량 > 20일 평균 × 2 (급증)
+2. 현재가 > 직전봉 종가 (상승)
+3. 일봉 기준 양봉 형성
+4. 거래대금 1억원 이상
 
 매도 조건:
-1. 거래량 감소 (평균 이하로 하락)
-2. 음봉 출현
-3. 목표 수익률(5%) 또는 손절(-2%)
+1. 익절: +3% 달성 시 즉시 매도
+2. 손절: -2% 도달 시 즉시 매도  
+3. 거래량이 평균 50% 이하로 급감 시 매도
+4. 보유 후 24시간 경과 시 청산 검토
+
+주의사항:
+- DOT, LINK, SOL 등 중대형 코인에서 특히 효과적
+- BTC 하락장에서는 진입 자제
+- 한 번에 1종목만 진입 권장
 """,
         "momentum_breakout": """
 당신은 '모멘텀 돌파' 전략 전문가입니다.
@@ -348,9 +354,65 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
         self.trade_logs: List[TradeExecution] = []
         self.ai_decisions: List[AITradeDecision] = []
         
+        # 실시간 활동 로그 & 발견된 신호
+        self.activity_logs: List[Dict] = []
+        self.discovered_signals: List[Dict] = []
+        
         # 스레드 관리
         self._stop_event = Event()
         self._thread: Optional[Thread] = None
+    
+    def set_broadcast_callback(self, callback):
+        """WebSocket 브로드캐스트 콜백 설정"""
+        self.broadcast_callback = callback
+    
+    def add_activity(self, activity_type: str, message: str, data: Dict = None):
+        """실시간 활동 로그 추가"""
+        log = {
+            "type": activity_type,  # scan, analysis, buy, sell, signal
+            "message": message,
+            "data": data or {},
+            "timestamp": datetime.now().isoformat()
+        }
+        self.activity_logs.append(log)
+        # 최대 100개 유지
+        if len(self.activity_logs) > 100:
+            self.activity_logs = self.activity_logs[-100:]
+        
+        # WebSocket으로 실시간 브로드캐스트
+        if hasattr(self, 'broadcast_callback') and self.broadcast_callback:
+            try:
+                import asyncio
+                asyncio.create_task(self.broadcast_callback(json.dumps({
+                    "type": "ai_activity",
+                    "data": log
+                })))
+            except Exception as e:
+                pass  # 브로드캐스트 실패 시 무시
+    
+    def add_signal(self, ticker: str, coin_name: str, strategy: str, score: float, reason: str, price: float):
+        """발견된 신호 추가"""
+        signal = {
+            "ticker": ticker,
+            "coin_name": coin_name,
+            "strategy": strategy,
+            "score": score,
+            "reason": reason,
+            "price": price,
+            "timestamp": datetime.now().isoformat()
+        }
+        self.discovered_signals.append(signal)
+        # 최대 50개 유지
+        if len(self.discovered_signals) > 50:
+            self.discovered_signals = self.discovered_signals[-50:]
+    
+    def get_activities(self, limit: int = 20) -> List[Dict]:
+        """활동 로그 조회"""
+        return list(reversed(self.activity_logs[-limit:]))
+    
+    def get_signals(self, limit: int = 20) -> List[Dict]:
+        """발견된 신호 조회"""
+        return list(reversed(self.discovered_signals[-limit:]))
     
     def set_ai_model(self, model_key: str) -> bool:
         """AI 모델 변경"""
@@ -584,9 +646,13 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
         # 0. 비트코인 추세 확인 (개선: 시장 상황 체크)
         btc_trend = self._check_btc_trend()
         
-        # BTC 급락 시 (-1% 이상) 매수 중단
-        if btc_trend < -1:
-            print(f"[{datetime.now()}] ⚠️ BTC 하락 중 ({btc_trend:+.2f}%) - 매수 보류")
+        self.add_activity("scan", f"시장 스캔 시작 (BTC: {btc_trend:+.2f}%)", {"btc_trend": btc_trend})
+        
+        # ===== 개선: BTC 하락 시 매수 완전 중단 =====
+        # BTC가 -0.5% 이하로 급락하는 상황이 아니면 매매 허용
+        if btc_trend < -0.5:
+            self.add_activity("warning", f"⚠️ BTC 급락 중 ({btc_trend:+.2f}%) - 리스크 관리로 매수 중단", {"btc_trend": btc_trend})
+            print(f"[{datetime.now()}] ⚠️ BTC 급락 중 ({btc_trend:+.2f}%) - 매수 중단")
             # 청산 체크만 진행
             await self._check_exit_positions()
             return
@@ -595,36 +661,73 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
         candidates = await self._scan_candidates()
         
         if not candidates:
+            self.add_activity("scan", "스캔 완료: 조건에 맞는 코인 없음", {"count": 0})
             print(f"[{datetime.now()}] 📊 스캔 완료: 후보 코인 없음")
             return
         
+        # 발견된 후보들을 신호로 추가
+        for ticker, data in candidates[:5]:
+            self.add_signal(
+                ticker=ticker,
+                coin_name=data.get('coin_name', ticker.replace('KRW-', '')),
+                strategy=data.get('strategy', self.selected_strategy),
+                score=data.get('score', 0),
+                reason=data.get('reason', ''),
+                price=data.get('price', 0)
+            )
+        
+        self.add_activity("scan", f"스캔 완료: {len(candidates)}개 후보 발견", {
+            "count": len(candidates),
+            "top_coins": [c[1].get('coin_name', c[0]) for c in candidates[:3]]
+        })
         print(f"[{datetime.now()}] 📊 스캔 완료: {len(candidates)}개 후보 (BTC: {btc_trend:+.2f}%)")
         
         # 2. 기존 포지션 청산 체크
         await self._check_exit_positions()
         
-        # 3. 새 진입 (최대 포지션 미만일 때, BTC 추세 양호할 때만)
-        if len(self.positions) < self.max_positions and btc_trend >= -0.5:
+        # 3. 새 진입 (최대 포지션 미만일 때, BTC가 보합 이상일 때만)
+        # ===== 개선: BTC가 보합(>= 0%) 이상이면 매수 시도 =====
+        if len(self.positions) < self.max_positions and btc_trend >= 0:
             for ticker, data in candidates[:3]:  # 상위 3개만 AI 분석
                 if ticker in self.positions:
                     continue
                 
+                coin_name = data.get('coin_name', ticker.replace('KRW-', ''))
+                
                 # AI 분석 시도
+                self.add_activity("analysis", f"{coin_name} AI 분석 중...", {
+                    "ticker": ticker,
+                    "score": data.get('score', 0),
+                    "reason": data.get('reason', '')
+                })
+                
                 decision = await self._ai_analyze(ticker, data, "entry")
                 
-                # AI 분석 성공 시 (개선: 신뢰도 85% 이상)
+                # 디버그 로그
+                score = data.get('score', 0)
+                if decision:
+                    print(f"[{datetime.now()}] 📊 {coin_name}: AI={decision.action}({decision.confidence}%), 점수={score:.0f}")
+                else:
+                    print(f"[{datetime.now()}] 📊 {coin_name}: AI=None, 점수={score:.0f}")
+                
+                # AI 분석 성공 시 (개선: 신뢰도 75% 이상)
                 if decision and decision.action == "buy" and decision.confidence >= self.MIN_AI_CONFIDENCE:
+                    self.add_activity("decision", f"{coin_name} 매수 결정 (신뢰도 {decision.confidence}%)", {
+                        "ticker": ticker,
+                        "confidence": decision.confidence,
+                        "reason": decision.reason
+                    })
                     await self._execute_buy(ticker, decision)
                     print(f"[{datetime.now()}] 🎯 AI 매수 결정: {ticker} (신뢰도 {decision.confidence}%)")
                     
-                # AI 분석 실패 시 점수 기반 매수 (폴백, 개선: 140점 이상)
-                elif decision is None and data.get('score', 0) >= self.FALLBACK_SCORE:
+                # 점수 기반 폴백 매수: AI가 hold 결정하거나 실패해도 점수 100 이상이면 매수
+                elif data.get('score', 0) >= self.FALLBACK_SCORE:
                     # 점수가 매우 높으면 규칙 기반으로 매수
                     fallback_decision = AITradeDecision(
                         ticker=ticker,
                         action="buy",
                         confidence=75,
-                        amount_percent=50,
+                        amount_percent=100,  # 100%로 설정 (50% → 100%)
                         reason=f"규칙기반 매수: {data.get('reason', '')} (점수 {data.get('score', 0):.0f})",
                         target_price=data.get('price', 0) * 1.05,
                         stop_loss=data.get('price', 0) * 0.97,
@@ -741,10 +844,18 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
                             strategy_reason = f"📈BB이탈 {bb_percent:.0f}%"
                             
                     elif strategy == "volume_surge":
-                        # 거래량 급증: 평균 대비 2배 이상 + 양봉
-                        if volume_ratio > 2.0 and price_change > 1:
-                            strategy_score = 60 + min(40, (volume_ratio - 2) * 15 + price_change * 3)
-                            strategy_reason = f"🔥거래량 {volume_ratio:.1f}배"
+                        # 거래량 돌파: 백테스트 1위 전략 (+9.11%)
+                        # 조건: 거래량 2배 이상 + 가격 상승 + 거래대금 1억 이상
+                        if volume_ratio >= 2.0 and price_change > 0:
+                            # 기본 점수 80점 + 거래량/가격상승 가산점
+                            base_score = 80
+                            volume_bonus = min(15, (volume_ratio - 2) * 10)  # 최대 15점
+                            price_bonus = min(10, price_change * 3)  # 최대 10점
+                            # 대형 알트코인 보너스 (DOT, LINK, SOL, AVAX)
+                            premium_coins = ["KRW-DOT", "KRW-LINK", "KRW-SOL", "KRW-AVAX", "KRW-ETH"]
+                            coin_bonus = 10 if ticker in premium_coins else 0
+                            strategy_score = base_score + volume_bonus + price_bonus + coin_bonus
+                            strategy_reason = f"🔥거래량돌파 {volume_ratio:.1f}배 +{price_change:.1f}%"
                             
                     elif strategy == "momentum_breakout":
                         # 모멘텀 돌파: 20일 신고가 + 거래량 증가
@@ -820,40 +931,62 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
                             
                             strategy_reason = f"🏆래리종합 {conditions_met}조건"
                     
-                    # ========== 수익률 최대화 전략 ==========
+                    # ========== 수익률 최대화 전략 (개선: 상승 추세에서만 매수) ==========
                     elif strategy == "max_profit":
-                        # 5개 지표 동시 확인
-                        cond1_rsi = 30 <= rsi <= 45 and rsi > prev_rsi  # RSI 과매도 반등
-                        cond2_bb = bb_percent <= 20  # 볼린저 하단 근처
-                        cond3_volume = volume_ratio >= 2.0  # 거래량 2배 이상
-                        cond4_price = price_change > 0.5  # 상승 전환
-                        cond5_momentum = current_price > float(df['close'].iloc[-3])  # 3봉 상승 추세
+                        # ===== 핵심 변경: 상승 추세 확인 =====
                         
-                        # MACD 계산
+                        # 1. 가격이 20일 이동평균 위에 있어야 함 (상승 추세 확인)
+                        cond1_above_ma = current_price > ma20
+                        
+                        # 2. RSI 45-65 (적정 구간, 과매수/과매도 아님) + 상승 중
+                        cond2_rsi = 45 <= rsi <= 65 and rsi > prev_rsi
+                        
+                        # 3. 볼린저 밴드 중간~상단 (30-80%) - 상승 추세
+                        cond3_bb = 30 <= bb_percent <= 80
+                        
+                        # 4. 거래량 1.5배 이상 (강한 매수세)
+                        cond4_volume = volume_ratio >= 1.5
+                        
+                        # 5. 당일 상승 중 (0.3% 이상)
+                        cond5_price = price_change > 0.3
+                        
+                        # 6. 5일 연속 상승 추세 (고점 갱신)
+                        cond6_uptrend = (float(df['close'].iloc[-1]) > float(df['close'].iloc[-2]) and
+                                        float(df['close'].iloc[-2]) > float(df['close'].iloc[-3]))
+                        
+                        # 7. MACD 골든크로스 또는 양수 유지
                         exp12 = df['close'].ewm(span=12, adjust=False).mean()
                         exp26 = df['close'].ewm(span=26, adjust=False).mean()
-                        macd_hist = exp12 - exp26 - (exp12 - exp26).ewm(span=9, adjust=False).mean()
-                        cond6_macd = float(macd_hist.iloc[-1]) > float(macd_hist.iloc[-2])  # MACD 상향
+                        macd = exp12 - exp26
+                        signal = macd.ewm(span=9, adjust=False).mean()
+                        macd_hist = macd - signal
+                        cond7_macd = float(macd_hist.iloc[-1]) > 0 and float(macd_hist.iloc[-1]) > float(macd_hist.iloc[-2])
                         
-                        conditions_met = sum([cond1_rsi, cond2_bb, cond3_volume, cond4_price, cond5_momentum, cond6_macd])
+                        # 8. 최근 5일 내 신고가 근처 (상위 20%)
+                        high_5d = df['high'].tail(5).max()
+                        cond8_near_high = current_price >= float(high_5d) * 0.98
                         
-                        # 최소 4개 조건 충족 시
-                        if conditions_met >= 4:
-                            strategy_score = 70 + conditions_met * 5
-                            if cond1_rsi:
-                                strategy_score += 10
-                            if cond2_bb:
-                                strategy_score += 8
-                            if cond3_volume:
-                                strategy_score += min(15, (volume_ratio - 2) * 5)
+                        conditions_met = sum([cond1_above_ma, cond2_rsi, cond3_bb, cond4_volume, 
+                                            cond5_price, cond6_uptrend, cond7_macd, cond8_near_high])
+                        
+                        # ===== 핵심: 상승 추세 필수 + 최소 5개 조건 충족 =====
+                        if cond1_above_ma and cond6_uptrend and conditions_met >= 5:
+                            strategy_score = 80 + conditions_met * 5
+                            if cond7_macd:
+                                strategy_score += 10  # MACD 골든크로스 가산
+                            if cond8_near_high:
+                                strategy_score += 10  # 신고가 근처 가산
+                            if cond4_volume:
+                                strategy_score += min(10, (volume_ratio - 1.5) * 5)
                             
                             indicators = []
-                            if cond1_rsi: indicators.append(f"RSI{rsi:.0f}")
-                            if cond2_bb: indicators.append(f"BB{bb_percent:.0f}%")
-                            if cond3_volume: indicators.append(f"Vol{volume_ratio:.1f}x")
-                            if cond6_macd: indicators.append("MACD↑")
+                            indicators.append(f"MA20↑")  # 이평선 위
+                            if cond2_rsi: indicators.append(f"RSI{rsi:.0f}")
+                            if cond4_volume: indicators.append(f"Vol{volume_ratio:.1f}x")
+                            if cond7_macd: indicators.append("MACD↑")
+                            if cond8_near_high: indicators.append("신고가")
                             
-                            strategy_reason = f"💎최대수익 {conditions_met}조건({','.join(indicators[:3])})"
+                            strategy_reason = f"💎상승추세 {conditions_met}조건({','.join(indicators[:4])})"
                     
                     # 점수가 있으면 추가
                     if strategy_score > 0:
@@ -1034,6 +1167,10 @@ RSI(14): {data['rsi']:.1f}
                 profit_rate = (current_price - entry_price) / entry_price * 100
                 holding_minutes = (datetime.now() - datetime.fromisoformat(pos.get('entry_time', datetime.now().isoformat()))).total_seconds() / 60
                 
+                # 수익이 5% 이상일 때만 AI 매도 분석 (수익 극대화 전략)
+                if profit_rate < 5.0 and profit_rate > -2.0:
+                    continue
+
                 # 최근 1분봉 데이터로 시장 상황 분석
                 df = self.client.get_ohlcv(ticker, interval="minute1", count=30)
                 if df is None or len(df) < 20:
@@ -1055,7 +1192,7 @@ RSI(14): {data['rsi']:.1f}
                 prev_volume = float(df['volume'].iloc[-10:-5].mean())
                 volume_trend = recent_volume / prev_volume if prev_volume > 0 else 1
                 
-                # AI 분석 프롬프트 생성
+                # AI 분석 데이터 준비
                 analysis_data = {
                     'ticker': ticker,
                     'coin_name': pos['coin_name'],
@@ -1070,23 +1207,26 @@ RSI(14): {data['rsi']:.1f}
                     'entry_reason': pos.get('ai_reason', ''),
                 }
                 
-                # AI에게 매도 타이밍 판단 요청
-                decision = await self._ai_analyze_sell_timing(analysis_data)
+                # AI에게 매도 타이밍 판단 요청 (통합된 메서드 사용)
+                decision = await self._ai_analyze_sell_timing_logic(analysis_data)
                 
-                if decision and decision.action == "sell" and decision.confidence >= 75:
+                if decision and decision.action == "sell" and decision.confidence >= 70:
                     print(f"[{datetime.now()}] 🤖 AI 매도 결정: {pos['coin_name']} (신뢰도 {decision.confidence}%)")
                     await self._execute_sell(ticker, f"🤖 AI 최적 타이밍: {decision.reason}", profit_rate, current_price)
                 elif decision and decision.action == "hold":
                     # 최고 수익 갱신
                     if profit_rate > pos.get('max_profit', 0):
                         pos['max_profit'] = profit_rate
-                        print(f"[{datetime.now()}] 📈 {pos['coin_name']}: 최고 수익 갱신 {profit_rate:.2f}%")
+                        # 트레일링 스탑 조정
+                        if profit_rate >= 2.0:
+                            new_stop = current_price * 0.985 # 현재가 대비 -1.5% 하락 시 매도
+                            pos['trailing_stop'] = max(pos.get('trailing_stop', 0), new_stop)
                         
             except Exception as e:
                 print(f"[{datetime.now()}] ⚠️ AI 모니터링 오류 ({ticker}): {e}")
     
-    async def _ai_analyze_sell_timing(self, data: Dict) -> Optional[AITradeDecision]:
-        """AI가 최적의 매도 타이밍 분석"""
+    async def _ai_analyze_sell_timing_logic(self, data: Dict) -> Optional[AITradeDecision]:
+        """AI가 최적의 매도 타이밍 분석 (핵심 로직)"""
         if not OPENROUTER_API_KEY:
             return None
         
@@ -1108,11 +1248,9 @@ RSI(14): {data['rsi']:.1f}
 거래량 추세: {data['volume_trend']:.2f}x
 
 === 판단 기준 ===
-1. 수익 중이면: 추가 상승 가능성 vs 이익 실현 시점
-2. 손실 중이면: 반등 가능성 vs 손절 필요성
-3. RSI 과매수(70+)이면 매도 고려
-4. 거래량 감소 + 수익 중이면 익절 고려
-5. 최고 수익 대비 크게 하락하면 익절 고려
+1. 수익 중(+5% 이상)이면: 추가 상승 가능성 vs 이익 실현 시점 분석. RSI 70 이상이거나 거래량 급감 시 매도 고려.
+2. 손실 중(-2% 이하)이면: 기술적 반등 가능성이 낮아보이면 과감히 손절 결정.
+3. 최고 수익 대비 1.5% 이상 하락하면 익절 권장.
 
 === 응답 형식 (JSON) ===
 {{
@@ -1123,7 +1261,7 @@ RSI(14): {data['rsi']:.1f}
     "stop_loss": 손절가 (hold인 경우)
 }}
 
-지금이 최적의 매도 타이밍인지 판단해주세요."""
+지금이 최적의 매도 타이밍인지 판단해주세요. 반드시 JSON으로만 답하세요."""
 
         try:
             ssl_context = ssl.create_default_context(cafile=certifi.where())
@@ -1138,7 +1276,7 @@ RSI(14): {data['rsi']:.1f}
                     json={
                         "model": self.ai_model_id,
                         "messages": [{"role": "user", "content": prompt}],
-                        "temperature": 0.3,
+                        "temperature": 0.2,
                         "max_tokens": 300
                     },
                     ssl=ssl_context
@@ -1149,13 +1287,12 @@ RSI(14): {data['rsi']:.1f}
                     result = await response.json()
                     content = result['choices'][0]['message']['content']
                     
-                    # JSON 파싱
-                    if "```json" in content:
-                        content = content.split("```json")[1].split("```")[0]
-                    elif "```" in content:
-                        content = content.split("```")[1].split("```")[0]
-                    
-                    decision_data = json.loads(content.strip())
+                    import re
+                    json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                    if not json_match:
+                        return None
+                        
+                    decision_data = json.loads(json_match.group().strip())
                     
                     return AITradeDecision(
                         ticker=data['ticker'],
@@ -1173,17 +1310,33 @@ RSI(14): {data['rsi']:.1f}
             return None
     
     async def _check_exit_positions(self):
-        """포지션 청산 체크 - 개선된 손익비 전략"""
+        """포지션 청산 체크 - 5% 이상 수익 시 AI 매도 타이밍 분석"""
         positions_to_close = []
         
-        # 수수료 고려 최소 수익률 (개선: 0.8%)
-        MIN_PROFIT_FOR_EXIT = self.MIN_PROFIT_EXIT
-        MIN_HOLDING_SECONDS = 180  # 최소 3분 보유 (5분 → 3분)
+        # ===== 새로운 매도 전략 설정 =====
+        MIN_PROFIT_FOR_AI_ANALYSIS = 5.0  # AI 분석 시작 기준: 5% 이상
+        MIN_PROFIT_FOR_TRAILING = 5.0     # 트레일링 스탑 활성화: 5% 이상
+        STOP_LOSS_PCT = -3.0              # 손절: -3%
+        TARGET_PROFIT = 10.0              # 목표 수익률: 10%
+        MIN_HOLDING_SECONDS = 300         # 최소 5분 보유
+        
+        # 매도 스크리닝 시작 로그
+        if self.positions:
+            self.add_activity("exit_scan", f"📤 매도 스크리닝: {len(self.positions)}개 포지션 체크 (5% 이상 시 AI 분석)", {"positions": list(self.positions.keys())})
         
         for ticker, pos in list(self.positions.items()):
+            # 변수 초기화 (except 블록에서 접근 가능하도록)
+            should_exit = False
+            exit_reason = ""
+            profit_rate = 0
+            current_price = 0
+            holding_seconds = 0
+            max_profit = 0
+            ai_decided = False
+            
             try:
                 current_price = self.client.get_current_price(ticker)
-                if not current_price:
+                if not current_price or current_price <= 0:
                     continue
                 
                 entry_price = pos['entry_price']
@@ -1192,203 +1345,224 @@ RSI(14): {data['rsi']:.1f}
                 # 보유 시간 계산
                 entry_time = datetime.fromisoformat(pos.get('entry_time', datetime.now().isoformat()))
                 holding_seconds = (datetime.now() - entry_time).total_seconds()
+                holding_minutes = holding_seconds / 60
                 
-                # 최소 보유 시간 체크 (손절 제외)
-                is_min_holding_passed = holding_seconds >= MIN_HOLDING_SECONDS
-                
-                # ===== 동적 트레일링 스탑 시스템 =====
-                max_profit = pos.get('max_profit', profit_rate)
-                
-                # 1. 수익 기록 갱신
+                # 최고 수익률 기록 (None 처리)
+                max_profit = pos.get('max_profit') or profit_rate
+                if max_profit is None:
+                    max_profit = profit_rate
                 if profit_rate > max_profit:
                     pos['max_profit'] = profit_rate
                     max_profit = profit_rate
-                
-                # 2. 트레일링 스탑 활성화 (수익률 최대화 전략은 더 적극적)
-                trailing_threshold = 0.8 if self.selected_strategy == "max_profit" else self.TRAILING_ACTIVATE
-                if profit_rate >= trailing_threshold and 'trailing_stop' not in pos:
-                    # 수익률 최대화 전략은 0.3% 보장, 일반 전략은 0.5% 보장
-                    protect_start = 0.003 if self.selected_strategy == "max_profit" else 0.005
-                    pos['trailing_stop'] = entry_price * (1 + protect_start)
-                    print(f"[{datetime.now()}] 📊 {pos['coin_name']}: 트레일링 스탑 활성화 (수익 {profit_rate:.1f}%)")
-                
-                # 3. 수익 구간별 동적 트레일링 스탑 조정
-                if max_profit >= trailing_threshold:
-                    # 수익률 최대화 전략은 더 높은 보존 비율 적용
-                    if self.selected_strategy == "max_profit":
-                        if max_profit >= 2.5:
-                            protect_ratio = 0.85  # 2.5% 이상: 85% 보존 (2.1% 확보)
-                        elif max_profit >= 2:
-                            protect_ratio = 0.80  # 2% 이상: 80% 보존 (1.6% 확보)
-                        elif max_profit >= 1.5:
-                            protect_ratio = 0.75  # 1.5% 이상: 75% 보존 (1.1% 확보)
-                        elif max_profit >= 1:
-                            protect_ratio = 0.70  # 1% 이상: 70% 보존 (0.7% 확보)
-                        else:
-                            protect_ratio = 0.60  # 0.8% 이상: 60% 보존 (0.5% 확보)
-                    else:
-                        # 일반 전략 (기존 로직)
-                        if max_profit >= 3:
-                            protect_ratio = 0.80  # 3% 이상: 80% 보존 (2.4% 확보)
-                        elif max_profit >= 2:
-                            protect_ratio = 0.70  # 2% 이상: 70% 보존 (1.4% 확보)
-                        elif max_profit >= 1.5:
-                            protect_ratio = 0.60  # 1.5% 이상: 60% 보존 (0.9% 확보)
-                        else:
-                            protect_ratio = 0.50  # 1% 이상: 50% 보존 (0.5% 확보)
-                    
-                    new_stop = entry_price * (1 + (max_profit * protect_ratio) / 100)
-                    if new_stop > pos.get('trailing_stop', 0):
-                        pos['trailing_stop'] = new_stop
-                        # DB 업데이트
-                        db.update_position(ticker, {
-                            "max_profit": max_profit,
-                            "trailing_stop": new_stop
+                    # 신고점 도달 로그
+                    if max_profit >= 5.0:
+                        self.add_activity("new_high", f"🚀 {pos['coin_name']} 신고점: +{max_profit:.1f}%", {
+                            "ticker": ticker, "max_profit": max_profit
                         })
-                        if profit_rate < max_profit - 0.5:  # 최고점 대비 0.5% 이상 하락 시에만 로그
-                            print(f"[{datetime.now()}] 📈 {pos['coin_name']}: 트레일링 스탑 @ ₩{new_stop:,.0f} (최고 {max_profit:.1f}% → 현재 {profit_rate:.1f}%)")
                 
-                # 4. 급격한 수익 감소 감지 (개선: 최고점 대비 50% 이상 하락 시 청산)
-                profit_drawdown = max_profit - profit_rate
-                if max_profit >= 1.0 and profit_drawdown >= max_profit * 0.5 and profit_rate >= MIN_PROFIT_FOR_EXIT:
-                    positions_to_close.append((ticker, f"📉 수익 급감 익절 ({profit_rate:+.2f}%, 최고 {max_profit:.1f}%에서 하락)", profit_rate, current_price))
-                    continue
-                
-                # 청산 조건 체크
-                should_exit = False
-                exit_reason = ""
-                
-                # 1. 목표 수익률 도달 (최소 보유 시간 후)
-                target_profit = self._get_take_profit_target()
-                if profit_rate >= target_profit and is_min_holding_passed:
-                    should_exit = True
-                    exit_reason = f"🎯 목표 수익 도달 ({profit_rate:+.2f}%)"
-                
-                # 2. 트레일링 스탑 (수익 보존)
-                elif pos.get('trailing_stop') and current_price <= pos['trailing_stop'] and profit_rate >= MIN_PROFIT_FOR_EXIT:
-                    should_exit = True
-                    exit_reason = f"📉 트레일링 스탑 ({profit_rate:+.2f}%, 최고 {pos.get('max_profit', 0):.1f}%)"
-                
-                # 3. 손절 (전략별 차등)
-                # 수익률 최대화 전략은 더 타이트한 손절 (-1.5%)
-                stop_loss_pct = -1.5 if self.selected_strategy == "max_profit" else self.STOP_LOSS_PCT
-                if profit_rate <= stop_loss_pct:
+                # ===== 1. 손절 조건 (항상 적용) =====
+                if profit_rate <= STOP_LOSS_PCT:
                     should_exit = True
                     exit_reason = f"⛔ 손절 ({profit_rate:+.2f}%)"
                 
-                # 4. 장시간 보유 후 소폭 수익이면 청산 (개선: 20분 이상, 0.8% 이상)
-                elif holding_seconds >= 1200 and profit_rate >= MIN_PROFIT_FOR_EXIT:
+                # ===== 2. 목표 수익률 10% 도달 시 즉시 익절 =====
+                elif profit_rate >= TARGET_PROFIT:
                     should_exit = True
-                    exit_reason = f"⏰ 시간 기반 익절 ({profit_rate:+.2f}%, {holding_seconds/60:.0f}분 보유)"
+                    exit_reason = f"🎯 목표 수익 달성 ({profit_rate:+.2f}%)"
                 
-                # 5. AI 분석 (개선: 5분 이상 보유 & 1.5% 이상 수익/손실)
-                if not should_exit and holding_seconds >= 300 and abs(profit_rate) >= 1.5:
-                    df = self.client.get_ohlcv(ticker, interval="day", count=25)
-                    if df is not None and len(df) >= 21:
-                        # RSI 계산
-                        delta = df['close'].diff()
-                        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-                        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-                        rs = gain / loss
-                        rsi = float((100 - (100 / (1 + rs))).iloc[-1])
+                # ===== 3. 5% 이상 수익 시 AI 분석 및 트레일링 스탑 =====
+                elif profit_rate >= MIN_PROFIT_FOR_AI_ANALYSIS:
+                    
+                    # 3-1. 트레일링 스탑 활성화/조정
+                    if 'trailing_stop' not in pos:
+                        # 5% 수익의 80% = 4% 보장으로 시작
+                        pos['trailing_stop'] = entry_price * (1 + profit_rate * 0.8 / 100)
+                        print(f"[{datetime.now()}] 📊 {pos['coin_name']}: 트레일링 스탑 활성화 @ +{profit_rate * 0.8:.1f}% (현재 +{profit_rate:.1f}%)")
+                        self.add_activity("trailing_active", f"📊 {pos['coin_name']} 트레일링 스탑 활성화 (현재 +{profit_rate:.1f}%)", {
+                            "ticker": ticker, "profit_rate": profit_rate, "trailing_stop": pos['trailing_stop']
+                        })
+                    
+                    # 트레일링 스탑 동적 조정 (수익률에 따라 보존율 증가)
+                    if max_profit >= MIN_PROFIT_FOR_TRAILING:
+                        if max_profit >= 10:
+                            protect_ratio = 0.85  # 10% 이상: 85% 보존 (8.5% 확보)
+                        elif max_profit >= 8:
+                            protect_ratio = 0.82  # 8% 이상: 82% 보존 (6.6% 확보)
+                        elif max_profit >= 6:
+                            protect_ratio = 0.80  # 6% 이상: 80% 보존 (4.8% 확보)
+                        else:
+                            protect_ratio = 0.78  # 5% 이상: 78% 보존 (3.9% 확보)
                         
-                        # 수익 중이고 RSI 과매수면 익절 (개선: 70 이상)
-                        if profit_rate >= MIN_PROFIT_FOR_EXIT and rsi >= 70:
+                        new_stop = entry_price * (1 + (max_profit * protect_ratio) / 100)
+                        if new_stop > pos.get('trailing_stop', 0):
+                            pos['trailing_stop'] = new_stop
+                            db.update_position(ticker, {"max_profit": max_profit, "trailing_stop": new_stop})
+                    
+                    # 3-2. 트레일링 스탑 발동 체크
+                    if pos.get('trailing_stop') and current_price <= pos['trailing_stop']:
+                        should_exit = True
+                        exit_reason = f"📉 트레일링 스탑 발동 ({profit_rate:+.2f}%, 최고 {max_profit:.1f}%)"
+                    
+                    # 3-3. AI 매도 타이밍 분석 (5% 이상 & 5분 이상 보유)
+                    elif holding_seconds >= MIN_HOLDING_SECONDS:
+                        # 기술적 지표 수집
+                        df_m5 = self.client.get_ohlcv(ticker, interval="minute5", count=30)
+                        rsi_m5 = 50
+                        if df_m5 is not None and len(df_m5) >= 14:
+                            delta = df_m5['close'].diff()
+                            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                            rs = gain / loss
+                            rsi_m5 = float((100 - (100 / (1 + rs))).iloc[-1])
+
+                        analysis_data = {
+                            'ticker': ticker,
+                            'coin_name': pos['coin_name'],
+                            'entry_price': entry_price,
+                            'current_price': current_price,
+                            'profit_rate': profit_rate,
+                            'holding_minutes': holding_minutes,
+                            'rsi': rsi_m5,
+                            'recent_trend': 0, # Placeholder
+                            'volume_trend': 1, # Placeholder
+                            'max_profit': max_profit,
+                            'entry_reason': pos.get('ai_reason', ''),
+                        }
+                        
+                        ai_sell_decision = await self._ai_analyze_sell_timing_logic(analysis_data)
+                        
+                        if ai_sell_decision and ai_sell_decision.action == "sell" and ai_sell_decision.confidence >= 70:
                             should_exit = True
-                            exit_reason = f"📊 RSI 과매수 익절 (RSI {rsi:.0f}, {profit_rate:+.2f}%)"
-                        # 손실 중이고 RSI 과매도면 더 기다림 (반등 기대)
-                        elif profit_rate < 0 and rsi <= 30:
-                            print(f"[{datetime.now()}] ⏳ {pos['coin_name']}: RSI 과매도 - 반등 대기 (RSI {rsi:.0f})")
+                            exit_reason = f"🤖 AI 매도 결정 ({profit_rate:+.2f}%): {ai_sell_decision.reason}"
+                            ai_decided = True
+                        else:
+                            # AI가 홀딩 결정
+                            hold_reason = ai_sell_decision.reason if ai_sell_decision else '분석 대기'
+                            self.add_activity("ai_hold", f"🤖 {pos['coin_name']} AI 홀딩 (+{profit_rate:.1f}%): {hold_reason}", {
+                                "ticker": ticker, "profit_rate": profit_rate, "reason": hold_reason
+                            })
+                
+                # ===== 4. 5% 미만: 손절만 적용, 나머지는 홀딩 =====
+                # (위에서 이미 손절 조건 체크함)
                 
                 if should_exit:
                     positions_to_close.append((ticker, exit_reason, profit_rate, current_price))
+                    self.add_activity("exit_decision", f"🔔 {pos['coin_name']} 매도 결정: {exit_reason}", {
+                        "ticker": ticker, "profit_rate": round(profit_rate, 2),
+                        "reason": exit_reason, "ai_decided": ai_decided,
+                        "holding_min": round(holding_minutes, 1)
+                    })
                 else:
-                    # 현재 상태 로그 (5분마다)
-                    if int(holding_seconds) % 300 == 0 and holding_seconds > 0:
-                        print(f"[{datetime.now()}] 📍 {pos['coin_name']}: {profit_rate:+.2f}% ({holding_seconds/60:.0f}분 보유)")
+                    # 현재 상태 로그
+                    status = "🟢 수익" if profit_rate >= 0 else "🔴 손실"
+                    waiting_for = "AI 분석 대기" if profit_rate >= 5 else f"{5-profit_rate:.1f}% 더 필요"
+                    
+                    status_msg = f"{status} {pos['coin_name']}: {profit_rate:+.2f}% (보유 {holding_minutes:.0f}분)"
+                    if max_profit >= 5:
+                        status_msg += f" [최고 {max_profit:.1f}%]"
+                    if pos.get('trailing_stop'):
+                        trailing_pct = (pos['trailing_stop'] - entry_price) / entry_price * 100
+                        status_msg += f" [트레일링 +{trailing_pct:.1f}%]"
+                    
+                    self.add_activity("position_status", status_msg, {
+                        "ticker": ticker, "profit_rate": round(profit_rate, 2),
+                        "holding_min": round(holding_minutes, 1),
+                        "max_profit": round(max_profit, 2) if max_profit else 0,
+                        "trailing_stop": pos.get('trailing_stop'),
+                        "target_profit": TARGET_PROFIT,
+                        "stop_loss": STOP_LOSS_PCT,
+                        "waiting_for": waiting_for
+                    })
                     
             except Exception as e:
                 print(f"[{datetime.now()}] ⚠️ 포지션 체크 오류 ({ticker}): {e}")
+                import traceback
+                traceback.print_exc()
         
         # 청산 실행
         for ticker, reason, profit_rate, price in positions_to_close:
             await self._execute_sell(ticker, reason, profit_rate, price)
     
     def _get_take_profit_target(self) -> float:
-        """전략별 익절 목표 (개선: 1.5~3% 현실적 범위)"""
+        """전략별 익절 목표 (새 전략: 5% 이상에서 AI 분석, 10% 목표)"""
         targets = {
-            "volatility_breakout": 2.0,   # 변동성 돌파 2%
-            "rsi_reversal": 2.5,          # RSI 반등 2.5%
-            "bollinger_bounce": 2.0,      # 볼린저 반등 2%
-            "volume_surge": 2.5,          # 거래량 급증 2.5%
-            "momentum_breakout": 3.0,     # 모멘텀 돌파 3%
-            "scalping_5min": 1.5,         # 5분 스캘핑 1.5%
-            # 래리 윌리엄스 전략들 (현실화)
-            "larry_williams_r": 2.0,      # %R 반등 2%
-            "larry_oops": 2.5,            # OOPS! 패턴 2.5%
-            "larry_smash_day": 2.5,       # Smash Day 2.5%
-            "larry_combo": 3.0,           # 래리 종합 3%
-            # 수익률 최대화 (적극적 익절)
-            "max_profit": 2.5             # 빠른 익절 2.5%
+            "volatility_breakout": 8.0,   # 변동성 돌파 8%
+            "rsi_reversal": 7.0,          # RSI 반등 7%
+            "bollinger_bounce": 7.0,      # 볼린저 반등 7%
+            "volume_surge": 8.0,          # 거래량 급증 8%
+            "momentum_breakout": 10.0,    # 모멘텀 돌파 10%
+            "scalping_5min": 5.0,         # 5분 스캘핑 5%
+            # 래리 윌리엄스 전략들
+            "larry_williams_r": 7.0,      # %R 반등 7%
+            "larry_oops": 8.0,            # OOPS! 패턴 8%
+            "larry_smash_day": 8.0,       # Smash Day 8%
+            "larry_combo": 10.0,          # 래리 종합 10%
+            # 수익률 최대화 (AI 분석 후 최적 타이밍)
+            "max_profit": 10.0            # 목표 10% (5% 이상 시 AI 분석)
         }
-        return targets.get(self.selected_strategy, 2.0)
+        return targets.get(self.selected_strategy, 7.0)
     
     def _should_auto_exit(self, rsi: float, prev_rsi: float, bb_percent: float, 
                           volume_ratio: float, profit_rate: float, pos: Dict) -> bool:
-        """전략별 자동 청산 조건 (개선: 1.5~3% 목표 기준)"""
+        """전략별 자동 청산 조건 (새 전략: 5% 이상에서만 익절, AI 분석 우선)"""
         strategy = self.selected_strategy
         
-        # 최소 수익률 (개선: 0.8%)
-        MIN_PROFIT = self.MIN_PROFIT_EXIT
+        # ===== 새 전략: 5% 미만에서는 자동 익절 안함 =====
+        MIN_PROFIT_FOR_EXIT = 5.0
         
+        # 5% 미만이면 손절(-3%)만 적용
+        if profit_rate < MIN_PROFIT_FOR_EXIT:
+            return profit_rate <= -3.0  # 손절만 적용
+        
+        # 5% 이상에서 기술적 지표 기반 자동 익절 조건
         if strategy == "rsi_reversal":
-            # RSI 과매수 + 수익 (2.5% 목표)
-            return rsi > 70 and profit_rate >= 1.5
+            # RSI 과매수 + 5% 이상 수익
+            return rsi > 75 and profit_rate >= 5.0
         
         elif strategy == "bollinger_bounce":
-            # 볼린저 상단 도달 + 수익 (2% 목표)
-            return bb_percent > 90 and profit_rate >= 1.2
+            # 볼린저 상단 도달 + 5% 이상 수익
+            return bb_percent > 95 and profit_rate >= 5.0
         
         elif strategy == "volume_surge":
-            # 거래량 급감 + 수익 (2.5% 목표)
-            return volume_ratio < 0.7 and profit_rate >= 1.5
+            # 거래량 급감 + 5% 이상 수익
+            return volume_ratio < 0.5 and profit_rate >= 5.0
         
         elif strategy == "momentum_breakout":
-            # 모멘텀 약화 + 수익 (3% 목표)
-            return (rsi < prev_rsi - 5 and bb_percent < 60) and profit_rate >= 2
+            # 모멘텀 약화 + 5% 이상 수익
+            return (rsi < prev_rsi - 10 and bb_percent < 50) and profit_rate >= 5.0
         
         elif strategy == "scalping_5min":
-            # 스캘핑 빠른 청산 (1.5% 목표, 개선: 손절 -2%)
-            return profit_rate >= 1.5 or profit_rate <= self.STOP_LOSS_PCT or (rsi > 65 and profit_rate >= 1)
+            # 스캘핑 5% 이상 수익 시 과매수 체크
+            return profit_rate >= 5.0 and rsi > 70
         
         elif strategy == "volatility_breakout":
-            # 상승 모멘텀 약화 + 수익 (2% 목표)
-            return rsi > 70 and profit_rate >= 1.5
+            # 상승 모멘텀 약화 + 5% 이상 수익
+            return rsi > 75 and profit_rate >= 5.0
         
-        # 래리 윌리엄스 전략들 (개선: 2~3% 목표)
+        # 래리 윌리엄스 전략들
         elif strategy == "larry_williams_r":
-            # %R 과매수 전환 + 수익 (2% 목표)
-            return profit_rate >= 2 or (rsi > 70 and profit_rate >= 1.2)
+            # %R 과매수 전환 + 5% 이상 수익
+            return profit_rate >= 5.0 and rsi > 75
         
         elif strategy == "larry_oops":
-            # OOPS 패턴 (2.5% 목표)
-            return profit_rate >= 2.5 or (rsi > 70 and profit_rate >= 1.5)
+            # OOPS 패턴 5% 이상 수익
+            return profit_rate >= 5.0 and rsi > 70
         
         elif strategy == "larry_smash_day":
-            # Smash Day 반등 (2.5% 목표)
-            return (rsi > 60 and profit_rate >= 2) or profit_rate >= 2.5
+            # Smash Day 반등 5% 이상 수익
+            return profit_rate >= 5.0 and rsi > 65
         
         elif strategy == "larry_combo":
-            # 종합 전략 (3% 목표)
-            return profit_rate >= 3 or (rsi > 70 and profit_rate >= 2)
+            # 종합 전략 5% 이상 수익
+            return profit_rate >= 5.0 and rsi > 70
         
-        # ========== 수익률 최대화 전략 (적극적 익절) ==========
+        # ========== 수익률 최대화 전략 (5% 이상에서 AI 분석) ==========
         elif strategy == "max_profit":
-            # RSI 65 이상 + 수익 중 → 즉시 익절
-            if rsi > 65 and profit_rate >= 1.0:
+            # RSI 75 이상 + 5% 이상 수익 → AI 분석 후 익절
+            if rsi > 75 and profit_rate >= 5.0:
                 return True
-            # 2.5% 목표 달성
-            if profit_rate >= 2.5:
+            # 10% 목표 달성
+            if profit_rate >= 10.0:
                 return True
             # 거래량 급감 + 수익 중
             if volume_ratio < 0.8 and profit_rate >= 1.5:
@@ -1425,6 +1599,145 @@ RSI(14): {data['rsi']:.1f}
             return f"💎 최대수익 달성 (RSI {rsi:.0f}, {profit_rate:+.1f}%)"
         else:
             return f"📊 전략 청산 조건 충족 ({profit_rate:+.1f}%)"
+    
+    async def _ai_analyze_sell_timing(self, ticker: str, pos: Dict, profit_rate: float, max_profit: float, current_price: float) -> Optional[Dict]:
+        """5% 이상 수익 시 AI가 최적 매도 타이밍 분석"""
+        if not OPENROUTER_API_KEY:
+            return None
+        
+        coin_name = ticker.replace("KRW-", "")
+        entry_price = pos['entry_price']
+        entry_time = pos.get('entry_time', datetime.now().isoformat())
+        holding_minutes = (datetime.now() - datetime.fromisoformat(entry_time)).total_seconds() / 60
+        
+        # 기술적 지표 수집
+        try:
+            df = self.client.get_ohlcv(ticker, interval="minute5", count=50)
+            if df is None or len(df) < 30:
+                return None
+            
+            # RSI 계산
+            delta = df['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            rsi = float((100 - (100 / (1 + rs))).iloc[-1])
+            
+            # 볼린저 밴드
+            middle = df['close'].rolling(window=20).mean()
+            std = df['close'].rolling(window=20).std()
+            upper = middle + (std * 2)
+            lower = middle - (std * 2)
+            bb_percent = ((current_price - float(lower.iloc[-1])) / (float(upper.iloc[-1]) - float(lower.iloc[-1])) * 100) if std.iloc[-1] > 0 else 50
+            
+            # MACD
+            exp12 = df['close'].ewm(span=12, adjust=False).mean()
+            exp26 = df['close'].ewm(span=26, adjust=False).mean()
+            macd = exp12 - exp26
+            signal = macd.ewm(span=9, adjust=False).mean()
+            macd_histogram = float((macd - signal).iloc[-1])
+            
+            # 최근 5개 봉 추세
+            recent_trend = "상승" if df['close'].iloc[-1] > df['close'].iloc[-5] else "하락"
+            price_momentum = ((df['close'].iloc[-1] - df['close'].iloc[-5]) / df['close'].iloc[-5] * 100)
+            
+        except Exception as e:
+            print(f"[{datetime.now()}] ⚠️ AI 매도 분석 지표 수집 실패: {e}")
+            return None
+        
+        prompt = f"""
+당신은 암호화폐 수익 극대화 전문가입니다.
+현재 5% 이상의 수익이 발생한 포지션을 분석하여 **지금 매도할지, 더 보유할지** 결정해주세요.
+
+===== 현재 포지션 정보 =====
+코인: {coin_name}
+매수가: ₩{entry_price:,.0f}
+현재가: ₩{current_price:,.0f}
+현재 수익률: +{profit_rate:.2f}%
+최고 수익률: +{max_profit:.2f}% (신고점 대비 {max_profit - profit_rate:.2f}% 하락)
+보유 시간: {holding_minutes:.0f}분
+
+===== 기술적 지표 =====
+RSI(14): {rsi:.1f} (70 이상: 과매수, 30 이하: 과매도)
+볼린저 밴드 위치: {bb_percent:.1f}% (100%: 상단, 0%: 하단)
+MACD 히스토그램: {macd_histogram:.4f} (양수: 상승세, 음수: 하락세)
+최근 5봉 추세: {recent_trend} ({price_momentum:+.2f}%)
+
+===== 판단 기준 =====
+1. 추가 상승 가능성:
+   - RSI가 70 미만이고 MACD가 양수면 상승 여력 있음
+   - 볼린저 상단(100%) 근처면 과열, 중간(50%)이면 정상
+   
+2. 하락 리스크:
+   - RSI 75 이상이면 과매수로 조정 가능성 높음
+   - 최고점 대비 2% 이상 하락 시 추가 하락 주의
+   - MACD 히스토그램이 음수로 전환되면 하락 신호
+   
+3. 이상적인 익절 시점:
+   - RSI 65-75 구간에서 MACD 음수 전환 시
+   - 볼린저 상단 돌파 후 되돌림 시
+   - 최고점 대비 1.5% 이상 하락 시 (수익 보존)
+
+===== 응답 형식 (JSON) =====
+{{
+    "should_sell": true/false,
+    "confidence": 0-100,
+    "reason": "판단 근거 (한국어, 간결하게)",
+    "expected_move": "추가 상승/하락 예상 (%, 방향)"
+}}
+
+**중요**: 5% 이상 수익을 확보한 상태이므로 무리하게 홀딩하지 말고, 하락 신호가 보이면 익절을 권장하세요.
+"""
+        
+        try:
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+            connector = aiohttp.TCPConnector(ssl=ssl_context)
+            
+            async with aiohttp.ClientSession(connector=connector) as session:
+                async with session.post(
+                    f"{OPENROUTER_BASE_URL}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": self.ai_model_id,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.2,
+                        "max_tokens": 300
+                    },
+                    timeout=aiohttp.ClientTimeout(total=15)
+                ) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        content = result['choices'][0]['message']['content']
+                        
+                        # JSON 파싱
+                        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                        if json_match:
+                            decision = json.loads(json_match.group())
+                            
+                            # 결정 로그
+                            action = "매도" if decision.get('should_sell') else "홀딩"
+                            self.add_activity("ai_sell_analysis", 
+                                f"🤖 {coin_name} AI 분석: {action} (신뢰도 {decision.get('confidence', 0)}%)", {
+                                "ticker": ticker,
+                                "should_sell": decision.get('should_sell'),
+                                "confidence": decision.get('confidence'),
+                                "reason": decision.get('reason'),
+                                "profit_rate": profit_rate,
+                                "rsi": rsi,
+                                "expected_move": decision.get('expected_move')
+                            })
+                            
+                            return decision
+                    else:
+                        print(f"[{datetime.now()}] ⚠️ AI 매도 분석 API 오류: {response.status}")
+                        return None
+                        
+        except Exception as e:
+            print(f"[{datetime.now()}] ⚠️ AI 매도 타이밍 분석 실패: {e}")
+            return None
     
     async def _ai_analyze_exit(self, ticker: str, data: Dict, pos: Dict) -> Optional[AITradeDecision]:
         """AI 청산 분석 - 수익 극대화 판단"""
@@ -1588,30 +1901,64 @@ RSI(14): {data['rsi']:.1f}
                 db.save_trade(asdict(trade_log))
                 db.save_position(self.positions[ticker])
                 
+                print(f"[{datetime.now()}] 📝 거래 기록 저장 완료: {coin_name} 매수")
+                
+                # 활동 로그 추가
+                self.add_activity("buy", f"{coin_name} 매수 완료 @ ₩{current_price:,.0f}", {
+                    "ticker": ticker,
+                    "coin_name": coin_name,
+                    "price": current_price,
+                    "amount": invest_amount,
+                    "confidence": decision.confidence,
+                    "reason": decision.reason
+                })
+                
+                # 거래 이벤트 브로드캐스트
+                if hasattr(self, 'broadcast_callback') and self.broadcast_callback:
+                    try:
+                        asyncio.create_task(self.broadcast_callback(json.dumps({
+                            "type": "ai_scalping_trade",
+                            "data": asdict(trade_log)
+                        })))
+                    except Exception:
+                        pass
+                
                 print(f"[{datetime.now()}] ✅ 매수 완료: {coin_name} @ ₩{current_price:,.0f} "
                       f"(₩{invest_amount:,.0f}, 신뢰도: {decision.confidence}%)")
             else:
+                self.add_activity("error", f"{coin_name} 매수 실패", {"ticker": ticker})
                 print(f"[{datetime.now()}] ❌ 매수 실패: {coin_name}")
                 
         except Exception as e:
             print(f"[{datetime.now()}] ❌ 매수 오류: {e}")
     
     async def _execute_sell(self, ticker: str, reason: str, profit_rate: float, price: float):
-        """매도 실행 - 실제 체결 금액 계산"""
+        """매도 실행 - 실제 체결 금액 계산 및 5000원 제한 처리"""
         try:
             if ticker not in self.positions:
                 return
             
             pos = self.positions[ticker]
             coin_name = pos['coin_name']
+            currency = ticker.replace("KRW-", "")
             entry_price = pos['entry_price']
             
             # 매도 전 보유량 확인
-            balance = self.client.get_balance(coin_name) or 0
+            balance = self.client.get_balance(currency) or 0
             if balance <= 0:
-                del self.positions[ticker]
+                print(f"[{datetime.now()}] ⚠️ {coin_name} 잔고 없음, 포지션 강제 삭제")
+                if ticker in self.positions: del self.positions[ticker]
                 return
             
+            # 최소 주문 금액(5000원) 확인
+            estimated_value = balance * price
+            if estimated_value < 5000:
+                self.add_activity("error", f"{coin_name} 매도 실패: 최소 금액 미달 (약 ₩{estimated_value:,.0f})", {"ticker": ticker})
+                print(f"[{datetime.now()}] ❌ {coin_name} 매도 실패: 5000원 미만 (약 ₩{estimated_value:,.0f})")
+                # 금액이 너무 작으면 그냥 포지션에서 제거 (관리가 무의미함)
+                if ticker in self.positions: del self.positions[ticker]
+                return
+
             # 매도 전 KRW 잔고
             krw_before = self.client.get_balance("KRW") or 0
             
@@ -1620,7 +1967,7 @@ RSI(14): {data['rsi']:.1f}
             
             if result and 'error' not in result:
                 # 잠시 대기 후 실제 체결 금액 확인
-                await asyncio.sleep(1)
+                await asyncio.sleep(1.5)
                 
                 # 매도 후 KRW 잔고
                 krw_after = self.client.get_balance("KRW") or 0
@@ -1636,11 +1983,8 @@ RSI(14): {data['rsi']:.1f}
                 actual_price = actual_sell_amount / balance if balance > 0 else price
                 
                 # 실제 수익 계산
-                # 매수 총액 = 진입가 × 수량
                 buy_total = entry_price * balance
-                # 실제 수익 = 매도 금액 - 매수 금액
                 actual_profit = actual_sell_amount - buy_total
-                # 실제 수익률
                 actual_profit_rate = (actual_profit / buy_total * 100) if buy_total > 0 else 0
                 
                 trade_log = TradeExecution(
@@ -1648,7 +1992,7 @@ RSI(14): {data['rsi']:.1f}
                     ticker=ticker,
                     coin_name=coin_name,
                     action="sell",
-                    strategy=self.selected_strategy,
+                    strategy=pos.get('strategy', 'unknown'),
                     price=actual_price,
                     amount=balance,
                     total_krw=actual_sell_amount,
@@ -1667,16 +2011,18 @@ RSI(14): {data['rsi']:.1f}
                 db.close_position(ticker)
                 db.update_daily_stats()
                 
-                emoji = "📈" if actual_profit >= 0 else "📉"
-                print(f"[{datetime.now()}] {emoji} 매도 완료: {coin_name}")
-                print(f"    매수: {balance:.4f}개 × ₩{entry_price:,.0f} = ₩{buy_total:,.0f}")
-                print(f"    매도: {balance:.4f}개 × ₩{actual_price:,.0f} = ₩{actual_sell_amount:,.0f}")
-                print(f"    손익: ₩{actual_profit:+,.0f} ({actual_profit_rate:+.2f}%)")
-                print(f"    사유: {reason}")
+                print(f"[{datetime.now()}] 📝 거래 기록 저장 완료: {coin_name} 매도 ({actual_profit_rate:+.2f}%)")
                 
-                del self.positions[ticker]
+                emoji = "📈" if actual_profit >= 0 else "📉"
+                self.add_activity("sell", f"{coin_name} 매도 완료 ({actual_profit_rate:+.2f}%)", {
+                    "ticker": ticker, "coin_name": coin_name, "profit": actual_profit, "profit_rate": actual_profit_rate, "reason": reason
+                })
+                
+                print(f"[{datetime.now()}] {emoji} 매도 완료: {coin_name} ({actual_profit_rate:+.2f}%)")
+                if ticker in self.positions: del self.positions[ticker]
             else:
                 error_msg = result.get('error', '알 수 없는 오류') if result else '주문 실패'
+                self.add_activity("error", f"{coin_name} 매도 실패: {error_msg}", {"ticker": ticker})
                 print(f"[{datetime.now()}] ❌ 매도 실패: {coin_name} - {error_msg}")
                 
         except Exception as e:

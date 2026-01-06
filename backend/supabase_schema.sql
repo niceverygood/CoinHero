@@ -63,3 +63,7 @@ CREATE POLICY "Service role full access" ON trades FOR ALL USING (true);
 CREATE POLICY "Service role full access" ON positions FOR ALL USING (true);
 CREATE POLICY "Service role full access" ON daily_stats FOR ALL USING (true);
 
+
+
+
+

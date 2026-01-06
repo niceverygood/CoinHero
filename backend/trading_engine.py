@@ -21,6 +21,8 @@ from config import DEFAULT_TRADE_AMOUNT, MAX_COINS
 from coin_scanner import coin_scanner
 
 
+from database import db
+
 class StrategyType(str, Enum):
     VOLATILITY = "volatility"
     MA_CROSS = "ma_cross"
@@ -307,6 +309,7 @@ class TradingEngine:
             error=result.get('error') if not success else None
         )
         self.trade_logs.append(log)
+        db.save_trade(asdict(log))
         
         if success:
             print(f"[{datetime.now()}] 매수 성공: {ticker} {self.trade_amount:,}원")
@@ -332,6 +335,7 @@ class TradingEngine:
             error=result.get('error') if not success else None
         )
         self.trade_logs.append(log)
+        db.save_trade(asdict(log))
         
         if success:
             print(f"[{datetime.now()}] 매도 성공: {ticker} {volume}개")

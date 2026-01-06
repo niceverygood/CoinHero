@@ -115,8 +115,22 @@ class UpbitClient:
         """전체 잔고 조회"""
         try:
             balances = self.upbit.get_balances()
+            
+            # 에러 발생 시 처리
+            if isinstance(balances, dict) and 'error' in balances:
+                error_msg = balances.get('error', {}).get('message', '알 수 없는 오류')
+                print(f"업비트 API 에러: {error_msg}")
+                return []
+                
+            if not isinstance(balances, list):
+                print(f"잔고 조회 실패: 예상치 못한 응답 형식 {type(balances)}")
+                return []
+                
             result = []
             for b in balances:
+                if not isinstance(b, dict):
+                    continue
+                    
                 if float(b.get('balance', 0)) > 0 or float(b.get('locked', 0)) > 0:
                     currency = b.get('currency', '')
                     balance = float(b.get('balance', 0))
@@ -130,6 +144,8 @@ class UpbitClient:
                     # 평가금액 및 수익률 계산
                     total_balance = balance + locked
                     eval_amount = total_balance * current_price
+                    buy_total = total_balance * avg_buy_price  # 매수 총액
+                    profit = eval_amount - buy_total  # 실현 손익 (원화)
                     profit_rate = ((current_price - avg_buy_price) / avg_buy_price * 100) if avg_buy_price > 0 else 0
                     
                     result.append({
@@ -139,11 +155,15 @@ class UpbitClient:
                         'avg_buy_price': avg_buy_price,
                         'current_price': current_price,
                         'eval_amount': eval_amount,
+                        'buy_total': round(buy_total, 2),
+                        'profit': round(profit, 2),
                         'profit_rate': round(profit_rate, 2)
                     })
             return result
         except Exception as e:
-            print(f"전체 잔고 조회 실패: {e}")
+            print(f"전체 잔고 조회 예외 발생: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def get_avg_buy_price(self, ticker: str) -> float:

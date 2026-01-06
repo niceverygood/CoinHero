@@ -6,7 +6,10 @@ import {
   Layers, Shield, Flame, Eye, ArrowUpRight, ArrowDownRight
 } from 'lucide-react';
 
-const API_BASE = '';
+// 프로덕션: Railway 백엔드, 개발: 로컬 프록시
+const API_BASE = import.meta.env.PROD 
+  ? 'https://coinhero-production.up.railway.app' 
+  : '';
 
 // 전략 정보
 const STRATEGIES = [
@@ -54,6 +57,10 @@ function App() {
   // 시장 데이터
   const [btcPrice, setBtcPrice] = useState({ price: 0, change: 0 });
   const [ethPrice, setEthPrice] = useState({ price: 0, change: 0 });
+  
+  // 포지션 모니터링
+  const [positionDetails, setPositionDetails] = useState([]);
+  const [sellStrategyConfig, setSellStrategyConfig] = useState(null);
 
   // 시간 업데이트
   useEffect(() => {
@@ -140,6 +147,20 @@ function App() {
     }
   }, []);
 
+  const fetchPositionDetails = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/ai-scalping/positions`);
+      const data = await res.json();
+      console.log('🔍 포지션 데이터:', data);
+      setPositionDetails(data.positions || []);
+      if (data.sell_strategy_config) {
+        setSellStrategyConfig(data.sell_strategy_config);
+      }
+    } catch (e) {
+      console.error('포지션 상세 조회 실패:', e);
+    }
+  }, []);
+
   // AI 자동매매 제어
   const startTrading = async () => {
     try {
@@ -222,6 +243,7 @@ function App() {
         fetchTrades(),
         fetchAIStatus(),
         fetchMarketPrices(),
+        fetchPositionDetails(),
       ]);
       setLoading(false);
     };
@@ -232,10 +254,11 @@ function App() {
       fetchTrades();
       fetchAIStatus();
       fetchMarketPrices();
+      fetchPositionDetails();
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [fetchBalances, fetchTrades, fetchAIStatus, fetchMarketPrices]);
+  }, [fetchBalances, fetchTrades, fetchAIStatus, fetchMarketPrices, fetchPositionDetails]);
 
   // 보유 코인 (KRW 제외)
   const heldCoins = balances.filter(b => b.currency !== 'KRW' && b.balance > 0);
@@ -544,6 +567,147 @@ function App() {
               );
             })}
           </div>
+        </div>
+
+        {/* ========== 📊 포지션 모니터링 (이동됨) ========== */}
+        <div className="bg-[#12121a] rounded-2xl p-6 border border-gray-800 mb-4">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-purple-500/20 rounded-xl">
+                <Eye className="w-6 h-6 text-purple-400" />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold">포지션 모니터링</h3>
+                <p className="text-xs text-gray-500">Position Monitor & Sell Strategy</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1 bg-purple-500/10 rounded-full text-xs font-bold text-purple-400">
+                {positionDetails.length}개 포지션
+              </span>
+              <span className="px-2 py-1 bg-cyan-500/10 rounded-full text-[10px] text-cyan-400">
+                AI {positionDetails.filter(p => p.is_ai_managed).length}
+              </span>
+              <span className="px-2 py-1 bg-gray-500/10 rounded-full text-[10px] text-gray-400">
+                수동 {positionDetails.filter(p => !p.is_ai_managed).length}
+              </span>
+              <button 
+                onClick={fetchPositionDetails}
+                className="p-2 hover:bg-gray-800 rounded-lg transition-colors"
+              >
+                <RefreshCw className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+          </div>
+
+          {/* 매도 전략 설정 */}
+          {sellStrategyConfig && (
+            <div className="mb-6 p-4 bg-[#1a1a2e] rounded-xl border border-gray-800">
+              <div className="flex items-center gap-2 mb-3">
+                <Shield className="w-4 h-4 text-cyan-400" />
+                <span className="text-xs font-bold text-gray-400">매도 전략 설정</span>
+              </div>
+              <div className="grid grid-cols-5 gap-3 text-center text-xs">
+                <div className="bg-[#0a0a0f] rounded-lg p-2">
+                  <p className="text-red-400 font-bold">손절선</p>
+                  <p className="font-mono text-red-400">{sellStrategyConfig.stop_loss_pct}%</p>
+                </div>
+                <div className="bg-[#0a0a0f] rounded-lg p-2">
+                  <p className="text-yellow-400 font-bold">목표 수익</p>
+                  <p className="font-mono text-yellow-400">+{sellStrategyConfig.target_profit}%</p>
+                </div>
+                <div className="bg-[#0a0a0f] rounded-lg p-2">
+                  <p className="text-cyan-400 font-bold">AI 분석</p>
+                  <p className="font-mono text-cyan-400">+{sellStrategyConfig.min_profit_for_ai_analysis}%</p>
+                </div>
+                <div className="bg-[#0a0a0f] rounded-lg p-2">
+                  <p className="text-green-400 font-bold">트레일링</p>
+                  <p className="font-mono text-green-400">+{sellStrategyConfig.min_profit_for_trailing}%</p>
+                </div>
+                <div className="bg-[#0a0a0f] rounded-lg p-2">
+                  <p className="text-gray-400 font-bold">최소 보유</p>
+                  <p className="font-mono text-gray-300">{sellStrategyConfig.min_holding_seconds / 60}분</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 포지션 카드 그리드 */}
+          {positionDetails.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {positionDetails.map((pos, idx) => {
+                const statusColors = {
+                  red: 'border-red-500/50 bg-red-500/5',
+                  gold: 'border-yellow-500/50 bg-yellow-500/5',
+                  green: 'border-green-500/50 bg-green-500/5',
+                  cyan: 'border-cyan-500/50 bg-cyan-500/5',
+                  orange: 'border-orange-500/50 bg-orange-500/5',
+                  gray: 'border-gray-600/50 bg-gray-800/20'
+                };
+                const profitColor = pos.profit_rate >= 0 ? 'text-green-400' : 'text-red-400';
+                const isManual = !pos.is_ai_managed;
+                
+                return (
+                  <div 
+                    key={idx} 
+                    className={`rounded-xl p-4 border-2 ${statusColors[pos.status_color] || 'border-gray-700 bg-[#1a1a2e]'}`}
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-10 h-10 ${isManual ? 'bg-gray-600/20' : 'bg-purple-500/20'} rounded-lg flex items-center justify-center`}>
+                          <span className={`text-sm font-bold ${isManual ? 'text-gray-400' : 'text-purple-400'}`}>{pos.coin_name?.slice(0, 3)}</span>
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="font-bold">{pos.coin_name}</p>
+                            <span className={`text-[8px] px-1.5 py-0.5 rounded ${isManual ? 'bg-gray-600/30 text-gray-400' : 'bg-cyan-500/30 text-cyan-400'}`}>
+                              {isManual ? '수동' : 'AI'}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-gray-500">{pos.ticker}</p>
+                        </div>
+                      </div>
+                      <span className="text-xs px-2 py-1 rounded-lg bg-[#0a0a0f]">{pos.status}</span>
+                    </div>
+                    
+                    <div className="text-center py-3 mb-3 bg-[#0a0a0f] rounded-lg">
+                      <p className={`text-3xl font-bold ${profitColor}`}>
+                        {pos.profit_rate >= 0 ? '+' : ''}{pos.profit_rate}%
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        최고: <span className="text-cyan-400">+{pos.max_profit}%</span>
+                      </p>
+                    </div>
+                    
+                    <div className="space-y-2 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">매수가</span>
+                        <span className="font-mono">₩{pos.entry_price?.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">현재가</span>
+                        <span className={`font-mono ${profitColor}`}>₩{pos.current_price?.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">보유 시간</span>
+                        <span className="font-mono">{pos.holding_time}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">투자 금액</span>
+                        <span className="font-mono">₩{Math.round(pos.invest_amount || 0).toLocaleString()}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-8 bg-[#1a1a2e] rounded-xl border border-gray-800">
+              <Eye className="w-12 h-12 text-gray-700 mx-auto mb-3" />
+              <p className="text-gray-500 font-medium">보유 중인 종목이 없습니다</p>
+              <p className="text-xs text-gray-600 mt-1">자동매매가 활성화되면 매수한 종목이 여기에 표시됩니다</p>
+            </div>
+          )}
         </div>
 
         {/* ========== 하단 3분할 ========== */}

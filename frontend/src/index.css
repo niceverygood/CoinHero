@@ -135,5 +135,121 @@ body {
   100% { transform: translate(-50%, -50%) scale(1.5); opacity: 0; }
 }
 
+/* 슬라이드 인 애니메이션 */
+@keyframes slide-in-right {
+  0% { transform: translateX(100%); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.3s ease-out forwards;
+}
+
+/* 페이드 인 애니메이션 */
+@keyframes fade-in {
+  0% { opacity: 0; transform: translateY(-10px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out forwards;
+}
+
+/* 레이더 스캔 효과 */
+@keyframes radar-scan {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.animate-radar {
+  animation: radar-scan 2s linear infinite;
+}
+
+/* 글로우 펄스 */
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 5px currentColor, 0 0 10px currentColor; }
+  50% { box-shadow: 0 0 20px currentColor, 0 0 30px currentColor; }
+}
+
+.animate-glow-pulse {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+/* 바운스 */
+@keyframes bounce-in {
+  0% { transform: scale(0.8); opacity: 0; }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.animate-bounce-in {
+  animation: bounce-in 0.4s ease-out forwards;
+}
+
+/* 스캔라인 효과 */
+@keyframes scanline {
+  0% { background-position: 0 0; }
+  100% { background-position: 0 100%; }
+}
+
+.scanline-effect {
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 255, 255, 0.03) 2px,
+    rgba(0, 255, 255, 0.03) 4px
+  );
+  background-size: 100% 8px;
+  animation: scanline 10s linear infinite;
+}
+
+/* 숫자 변화 하이라이트 */
+@keyframes number-change {
+  0% { transform: scale(1.2); color: #22d3ee; }
+  100% { transform: scale(1); }
+}
+
+.animate-number-change {
+  animation: number-change 0.3s ease-out;
+}
+
+/* 로딩 도트 */
+@keyframes loading-dots {
+  0%, 80%, 100% { opacity: 0; }
+  40% { opacity: 1; }
+}
+
+.loading-dots span:nth-child(1) { animation: loading-dots 1.4s infinite 0s; }
+.loading-dots span:nth-child(2) { animation: loading-dots 1.4s infinite 0.2s; }
+.loading-dots span:nth-child(3) { animation: loading-dots 1.4s infinite 0.4s; }
+
+/* 실시간 표시기 */
+.live-indicator {
+  position: relative;
+}
+
+.live-indicator::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 8px;
+  background: #ef4444;
+  border-radius: 50%;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 
 

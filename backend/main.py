@@ -76,6 +76,9 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# AI Scalper에 WebSocket 브로드캐스트 콜백 설정
+ai_scalper.set_broadcast_callback(manager.broadcast)
+
 
 # ========== API 엔드포인트 ==========
 
@@ -174,13 +177,82 @@ async def check_auth_status():
 # 잔고 조회
 @app.get("/api/balance")
 async def get_balance():
-    """전체 잔고 조회"""
+    """전체 잔고 조회 (매수일 정보 포함)"""
     try:
         balances = upbit_client.get_balances()
         total_krw = sum(b['eval_amount'] for b in balances) if balances else 0
         
         # 인증 상태 확인
         auth_status = "connected" if balances else "disconnected"
+        
+        # 각 코인별 매수일 정보 추가
+        if balances:
+            # DB와 메모리에서 매수 기록 조회
+            all_trades = db.get_trades(500)  # 최근 500개 거래
+            memory_trades = trading_engine.get_trade_logs(100)
+            ai_trades = ai_scalper.get_trade_logs(100)
+            
+            # 코인별 최초 매수일 찾기
+            coin_buy_dates = {}
+            
+            # DB 거래에서 매수 기록 찾기
+            for trade in all_trades:
+                action = trade.get("action", trade.get("side", ""))
+                if action == "buy":
+                    ticker = trade.get("ticker", "")
+                    currency = ticker.replace("KRW-", "") if ticker else trade.get("coin_name", "")
+                    timestamp = trade.get("created_at", trade.get("timestamp", ""))
+                    if currency and timestamp:
+                        if currency not in coin_buy_dates:
+                            coin_buy_dates[currency] = timestamp
+                        elif timestamp < coin_buy_dates[currency]:
+                            coin_buy_dates[currency] = timestamp
+            
+            # 메모리 거래에서 매수 기록 찾기
+            for trade in memory_trades + ai_trades:
+                action = trade.get("action", trade.get("side", ""))
+                if action == "buy":
+                    ticker = trade.get("ticker", "")
+                    currency = ticker.replace("KRW-", "") if ticker else trade.get("coin_name", "")
+                    timestamp = trade.get("timestamp", "")
+                    if currency and timestamp:
+                        if currency not in coin_buy_dates:
+                            coin_buy_dates[currency] = timestamp
+                        elif timestamp < coin_buy_dates[currency]:
+                            coin_buy_dates[currency] = timestamp
+            
+            # AI 스캘퍼 포지션에서 entry_time 조회
+            for ticker, pos in ai_scalper.positions.items():
+                currency = ticker.replace("KRW-", "")
+                entry_time = pos.get("entry_time", "")
+                if entry_time:
+                    if currency not in coin_buy_dates:
+                        coin_buy_dates[currency] = entry_time
+                    elif entry_time < coin_buy_dates[currency]:
+                        coin_buy_dates[currency] = entry_time
+            
+            # 잔고 데이터에 매수일 정보 추가
+            now = datetime.now()
+            for b in balances:
+                currency = b.get("currency", "")
+                if currency in coin_buy_dates:
+                    buy_date_str = coin_buy_dates[currency]
+                    try:
+                        # ISO 형식 파싱
+                        if 'T' in buy_date_str:
+                            buy_date = datetime.fromisoformat(buy_date_str.replace('Z', '+00:00').split('+')[0])
+                        else:
+                            buy_date = datetime.strptime(buy_date_str[:10], "%Y-%m-%d")
+                        
+                        days_held = (now - buy_date).days
+                        b["buy_date"] = buy_date.strftime("%Y-%m-%d")
+                        b["days_held"] = days_held
+                    except:
+                        b["buy_date"] = None
+                        b["days_held"] = None
+                else:
+                    b["buy_date"] = None
+                    b["days_held"] = None
         
         return {
             "balances": balances,
@@ -276,37 +348,83 @@ async def manual_sell(request: TradeRequest):
 # 거래 기록
 @app.get("/api/trades")
 async def get_trades(limit: int = 50):
-    """거래 기록 조회 (규칙 기반 + AI 스캘핑 통합)"""
-    # 규칙 기반 거래 기록
-    rule_logs = trading_engine.get_trade_logs(limit)
+    """거래 기록 조회 (DB + 메모리 통합 및 정규화)"""
+    # 1. DB에서 최신 거래 내역 조회 (persistent)
+    db_trades = db.get_trades(limit)
     
-    # AI 스캘핑 거래 기록
-    ai_logs = ai_scalper.get_trade_logs(limit)
+    # 2. 엔진별 메모리 로그 수집 (최신 세션)
+    rule_logs_raw = trading_engine.get_trade_logs(limit)
+    ai_logs_raw = ai_scalper.get_trade_logs(limit)
     
-    # AI 로그를 TradeLog 형식으로 변환
-    converted_ai_logs = []
-    for log in ai_logs:
-        converted_ai_logs.append({
-            "side": log.get("action", "buy"),
-            "ticker": log.get("ticker", ""),
-            "amount": log.get("total_krw", 0),
-            "strategy": f"AI-{log.get('strategy', 'unknown')}",
+    # 정규화된 결과 리스트
+    normalized_trades = []
+    
+    # DB 로그 추가 (이미 정규화된 형식일 확률이 높음)
+    for t in db_trades:
+        # DB 필드명을 API 형식으로 변환
+        normalized_trades.append({
+            "action": t.get("action", t.get("side", "buy")),
+            "ticker": t.get("ticker", ""),
+            "coin_name": t.get("coin_name", t.get("ticker", "").replace("KRW-", "")),
+            "price": t.get("price", 0),
+            "total_krw": t.get("total_krw", t.get("amount", 0)),
+            "amount": t.get("amount", t.get("volume", 0)),
+            "strategy": t.get("strategy", ""),
+            "ai_reason": t.get("ai_reason", t.get("reason", "")),
+            "timestamp": t.get("created_at", t.get("timestamp", "")),
+            "success": t.get("success", True),
+            "profit": t.get("profit"),
+            "profit_rate": t.get("profit_rate")
+        })
+        
+    # 메모리 룰 로그 추가
+    for log in rule_logs_raw:
+        ticker = log.get("ticker", "")
+        normalized_trades.append({
+            "action": log.get("side", "buy"),
+            "ticker": ticker,
+            "coin_name": ticker.replace("KRW-", ""),
+            "price": log.get("price", 0),
+            "total_krw": log.get("amount", 0),
+            "amount": log.get("volume", 0),
+            "strategy": log.get("strategy", "manual"),
+            "ai_reason": log.get("reason", ""),
             "timestamp": log.get("timestamp", ""),
-            "success": True,
-            "reason": log.get("ai_reason", ""),
-            "ai_confidence": log.get("ai_confidence", 0),
-            "profit": log.get("profit"),
-            "profit_rate": log.get("profit_rate"),
+            "success": log.get("success", True),
+            "profit": None,
+            "profit_rate": None
+        })
+        
+    # 메모리 AI 로그 추가
+    for log in ai_logs_raw:
+        normalized_trades.append({
+            "action": log.get("action", "buy"),
+            "ticker": log.get("ticker", ""),
             "coin_name": log.get("coin_name", ""),
             "price": log.get("price", 0),
-            "quantity": log.get("amount", 0)
+            "total_krw": log.get("total_krw", 0),
+            "amount": log.get("amount", 0),
+            "strategy": f"AI-{log.get('strategy', 'unknown')}",
+            "ai_reason": log.get("ai_reason", ""),
+            "timestamp": log.get("timestamp", ""),
+            "success": True,
+            "profit": log.get("profit"),
+            "profit_rate": log.get("profit_rate")
         })
+        
+    # 중복 제거 (timestamp + ticker 기준)
+    seen = set()
+    unique_trades = []
+    for t in normalized_trades:
+        key = (t["timestamp"], t["ticker"], t["action"])
+        if key not in seen:
+            seen.add(key)
+            unique_trades.append(t)
+            
+    # 시간순 정렬
+    unique_trades.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
     
-    # 통합 및 시간순 정렬
-    all_logs = rule_logs + converted_ai_logs
-    all_logs.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-    
-    return {"trades": all_logs[:limit], "count": len(all_logs)}
+    return {"trades": unique_trades[:limit], "count": len(unique_trades)}
 
 
 # 분석
@@ -716,6 +834,166 @@ async def get_ai_scalping_status():
     return ai_scalper.get_status()
 
 
+@app.get("/api/ai-scalping/positions")
+async def get_ai_positions_detail():
+    """보유 포지션 상세 정보 및 매도 전략 조회 (모든 보유 종목 포함)"""
+    ai_positions = ai_scalper.positions  # AI가 관리하는 포지션
+    detailed_positions = []
+    processed_tickers = set()
+    
+    # 매도 전략 설정값
+    sell_strategy_config = {
+        "min_profit_for_ai_analysis": 5.0,
+        "min_profit_for_trailing": 5.0,
+        "stop_loss_pct": -3.0,
+        "target_profit": 10.0,
+        "min_holding_seconds": 300
+    }
+    
+    # 1. 먼저 AI 포지션 처리
+    for ticker, pos in ai_positions.items():
+        processed_tickers.add(ticker)
+        position_info = _get_position_detail(ticker, pos, sell_strategy_config, is_ai_managed=True)
+        detailed_positions.append(position_info)
+    
+    # 2. 업비트 잔고에서 모든 보유 종목 가져오기 (AI 포지션이 아닌 것도 포함)
+    try:
+        balances = upbit_client.get_balances()
+        if isinstance(balances, list):
+            for coin in balances:
+                currency = coin.get('currency', '')
+                if currency == 'KRW':
+                    continue
+                    
+                ticker = f"KRW-{currency}"
+                
+                # AI 포지션에서 이미 처리한 것은 스킵
+                if ticker in processed_tickers:
+                    continue
+                
+                balance = float(coin.get('balance', 0) or 0)
+                avg_buy_price = float(coin.get('avg_buy_price', 0) or 0)
+                
+                # 너무 작은 잔고는 스킵
+                if balance * avg_buy_price < 1000:
+                    continue
+                
+                # 수동 보유 종목 정보 구성
+                manual_pos = {
+                    'entry_price': avg_buy_price,
+                    'coin_name': currency,
+                    'entry_time': coin.get('buy_date') or datetime.now().isoformat(),
+                    'invest_amount': balance * avg_buy_price,
+                    'strategy': '수동 보유',
+                    'volume': balance
+                }
+                
+                position_info = _get_position_detail(ticker, manual_pos, sell_strategy_config, is_ai_managed=False)
+                detailed_positions.append(position_info)
+                processed_tickers.add(ticker)
+    except Exception as e:
+        logger.error(f"잔고 조회 오류: {e}")
+    
+    # 수익률 순으로 정렬 (높은 것이 먼저)
+    detailed_positions.sort(key=lambda x: x['profit_rate'], reverse=True)
+    
+    # 최근 AI 모니터링 로그 가져오기
+    recent_activities = ai_scalper.get_activities(20)
+    monitoring_logs = [a for a in recent_activities if a.get('type') in ['exit_scan', 'new_high', 'trailing_active', 'exit_decision', 'ai_sell_analysis', 'position_status']]
+    
+    return {
+        "positions": detailed_positions,
+        "count": len(detailed_positions),
+        "ai_count": len(ai_positions),
+        "manual_count": len(detailed_positions) - len(ai_positions),
+        "sell_strategy_config": sell_strategy_config,
+        "monitoring_logs": monitoring_logs[:10],
+        "is_monitoring": ai_scalper.is_running
+    }
+
+
+def _get_position_detail(ticker: str, pos: dict, sell_strategy_config: dict, is_ai_managed: bool = True) -> dict:
+    """포지션 상세 정보 생성"""
+    current_price = upbit_client.get_current_price(ticker)
+    entry_price = pos.get('entry_price', 0)
+    
+    if current_price and entry_price:
+        profit_rate = (current_price - entry_price) / entry_price * 100
+    else:
+        profit_rate = 0
+    
+    # 보유 시간 계산
+    entry_time_str = pos.get('entry_time', datetime.now().isoformat())
+    try:
+        entry_time = datetime.fromisoformat(entry_time_str.replace('Z', '+00:00'))
+        holding_seconds = (datetime.now() - entry_time.replace(tzinfo=None)).total_seconds()
+    except:
+        holding_seconds = 0
+    
+    holding_minutes = int(holding_seconds // 60)
+    holding_hours = holding_minutes // 60
+    holding_mins_remainder = holding_minutes % 60
+    
+    # 매도 전략 상태 분석
+    max_profit = pos.get('max_profit') or profit_rate
+    trailing_stop = pos.get('trailing_stop')
+    
+    # None 체크
+    if max_profit is None:
+        max_profit = profit_rate
+    
+    # 현재 상태 판단
+    if not is_ai_managed:
+        status = "👤 수동 보유"
+        status_color = "gray"
+    elif profit_rate <= sell_strategy_config["stop_loss_pct"]:
+        status = "🔴 손절 임박"
+        status_color = "red"
+    elif profit_rate >= sell_strategy_config["target_profit"]:
+        status = "🎯 목표 달성"
+        status_color = "gold"
+    elif profit_rate >= sell_strategy_config["min_profit_for_ai_analysis"]:
+        if trailing_stop:
+            trailing_pct = (trailing_stop - entry_price) / entry_price * 100
+            status = f"📊 트레일링 ({trailing_pct:+.1f}%)"
+            status_color = "green"
+        else:
+            status = "🤖 AI 분석 중"
+            status_color = "cyan"
+    elif profit_rate > 0:
+        status = "📈 수익 중"
+        status_color = "green"
+    else:
+        status = "📉 손실 중"
+        status_color = "orange"
+    
+    return {
+        "ticker": ticker,
+        "coin_name": pos.get('coin_name', ticker.replace('KRW-', '')),
+        "entry_price": entry_price,
+        "current_price": current_price,
+        "profit_rate": round(profit_rate, 2),
+        "max_profit": round(max_profit, 2),
+        "trailing_stop": trailing_stop,
+        "trailing_stop_pct": round((trailing_stop - entry_price) / entry_price * 100, 2) if trailing_stop and entry_price else None,
+        "entry_time": entry_time_str,
+        "holding_time": f"{holding_hours}h {holding_mins_remainder}m" if holding_hours > 0 else f"{holding_minutes}m",
+        "holding_seconds": holding_seconds,
+        "invest_amount": pos.get('invest_amount', 0),
+        "strategy": pos.get('strategy', ''),
+        "status": status,
+        "status_color": status_color,
+        "is_ai_managed": is_ai_managed,
+        "sell_strategy": {
+            "stop_loss": sell_strategy_config["stop_loss_pct"],
+            "target_profit": sell_strategy_config["target_profit"],
+            "ai_analysis_threshold": sell_strategy_config["min_profit_for_ai_analysis"],
+            "trailing_threshold": sell_strategy_config["min_profit_for_trailing"],
+            "min_holding_time": f"{sell_strategy_config['min_holding_seconds'] // 60}분"
+        }
+    }
+
+
 @app.post("/api/ai-scalping/configure")
 async def configure_ai_scalping(config: ScalpingConfigRequest):
     """AI 단타 트레이더 설정 (복수 전략 지원)"""
@@ -761,6 +1039,24 @@ async def stop_ai_scalping():
 async def get_ai_models():
     """사용 가능한 AI 모델 목록 조회"""
     return ai_scalper.get_ai_models()
+
+
+@app.get("/api/ai-scalping/activities")
+async def get_ai_activities(limit: int = 20):
+    """실시간 AI 활동 로그 조회"""
+    return {
+        "activities": ai_scalper.get_activities(limit),
+        "count": len(ai_scalper.activity_logs)
+    }
+
+
+@app.get("/api/ai-scalping/signals")
+async def get_ai_signals(limit: int = 20):
+    """발견된 신호 조회"""
+    return {
+        "signals": ai_scalper.get_signals(limit),
+        "count": len(ai_scalper.discovered_signals)
+    }
 
 
 @app.post("/api/ai-scalping/models/{model_key}")
@@ -821,15 +1117,22 @@ async def get_db_stats():
 
 
 @app.get("/api/db/trades")
-async def get_db_trades(limit: int = 50):
+async def get_db_trades(limit: int = 50, start_date: Optional[str] = None, end_date: Optional[str] = None):
     """DB에서 거래 기록 조회"""
     if not db.is_connected():
-        return {"trades": [], "error": "DB 연결 안됨"}
+        return {"trades": db.get_trades(limit, start_date, end_date), "error": "DB 연결 안됨"}
     
     return {
-        "trades": db.get_trades(limit),
+        "trades": db.get_trades(limit, start_date, end_date),
         "total_profit": db.get_total_profit()
     }
+
+
+@app.get("/api/stats/summary")
+async def get_stats_summary(start_date: Optional[str] = None, end_date: Optional[str] = None):
+    """일/주/월별 또는 특정 기간 수익 요약 조회"""
+    stats = db.get_period_stats(start_date, end_date)
+    return stats
 
 
 # ========== 서버 실행 ==========
