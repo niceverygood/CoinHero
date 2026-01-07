@@ -5,14 +5,12 @@ export default function SettingsModal({ isOpen, onClose, user, settings, onSave 
   const [formData, setFormData] = useState({
     upbit_access_key: '',
     upbit_secret_key: '',
-    openrouter_api_key: '',
-    default_trade_amount: 10000,
+    trade_amount: 10000,
     max_positions: 3,
   });
   const [showSecrets, setShowSecrets] = useState({
     upbit_access: false,
     upbit_secret: false,
-    openrouter: false,
   });
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
@@ -22,8 +20,7 @@ export default function SettingsModal({ isOpen, onClose, user, settings, onSave 
       setFormData({
         upbit_access_key: settings.upbit_access_key || '',
         upbit_secret_key: settings.upbit_secret_key || '',
-        openrouter_api_key: settings.openrouter_api_key || '',
-        default_trade_amount: settings.default_trade_amount || 10000,
+        trade_amount: settings.trade_amount || 10000,
         max_positions: settings.max_positions || 3,
       });
     }
@@ -122,34 +119,6 @@ export default function SettingsModal({ isOpen, onClose, user, settings, onSave 
             </div>
           </div>
 
-          {/* OpenRouter API Key */}
-          <div className="space-y-3">
-            <h3 className="text-sm font-medium text-purple-400 flex items-center gap-2">
-              <Key className="w-4 h-4" />
-              AI API 설정 (선택)
-            </h3>
-            
-            <div>
-              <label className="block text-sm text-zinc-400 mb-1">OpenRouter API Key</label>
-              <div className="relative">
-                <input
-                  type={showSecrets.openrouter ? 'text' : 'password'}
-                  value={formData.openrouter_api_key}
-                  onChange={(e) => setFormData({ ...formData, openrouter_api_key: e.target.value })}
-                  placeholder="OpenRouter API Key (없으면 기본 사용)"
-                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-500 focus:border-purple-500 focus:outline-none pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowSecrets({ ...showSecrets, openrouter: !showSecrets.openrouter })}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-zinc-500 hover:text-zinc-300"
-                >
-                  {showSecrets.openrouter ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-          </div>
-
           {/* Trading Settings */}
           <div className="space-y-3">
             <h3 className="text-sm font-medium text-green-400">💰 거래 설정</h3>
@@ -158,8 +127,8 @@ export default function SettingsModal({ isOpen, onClose, user, settings, onSave 
               <div>
                 <label className="block text-sm text-zinc-400 mb-1">기본 거래금액</label>
                 <select
-                  value={formData.default_trade_amount}
-                  onChange={(e) => setFormData({ ...formData, default_trade_amount: parseInt(e.target.value) })}
+                  value={formData.trade_amount}
+                  onChange={(e) => setFormData({ ...formData, trade_amount: parseInt(e.target.value) })}
                   className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white focus:border-green-500 focus:outline-none"
                 >
                   <option value={10000}>1만원</option>
