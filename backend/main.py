@@ -1,7 +1,7 @@
 """
 CoinHero - 업비트 자동거래 시스템 API 서버
 """
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -9,6 +9,9 @@ from typing import List, Optional, Dict, Any
 import asyncio
 import json
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 from config import BACKEND_PORT
 from upbit_client import upbit_client
@@ -22,6 +25,7 @@ from scalping_trader import scalping_trader
 from ai_scalper import ai_scalper
 from database import db
 from dataclasses import asdict
+from user_manager import user_manager
 
 app = FastAPI(
     title="CoinHero API",
@@ -51,6 +55,45 @@ class ConfigureRequest(BaseModel):
 class TradeRequest(BaseModel):
     ticker: str
     amount: Optional[float] = None
+
+
+class UserSettingsRequest(BaseModel):
+    upbit_access_key: Optional[str] = None
+    upbit_secret_key: Optional[str] = None
+    trade_amount: Optional[int] = 10000
+    max_positions: Optional[int] = 3
+
+
+class UserTradeRequest(BaseModel):
+    ticker: str
+    amount: Optional[float] = None
+    volume: Optional[float] = None
+
+
+# ========== 인증 Dependency ==========
+
+async def get_current_user(authorization: Optional[str] = Header(None)) -> Optional[Dict[str, Any]]:
+    """
+    Authorization 헤더에서 사용자 정보 추출
+    Bearer 토큰이 없거나 유효하지 않으면 None 반환
+    """
+    if not authorization:
+        return None
+    
+    if not authorization.startswith("Bearer "):
+        return None
+    
+    token = authorization.replace("Bearer ", "")
+    user = user_manager.verify_token(token)
+    return user
+
+
+async def require_auth(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
+    """인증 필수 Dependency"""
+    user = await get_current_user(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="인증이 필요합니다")
+    return user
 
 
 # ========== WebSocket 관리 ==========
@@ -1133,6 +1176,184 @@ async def get_stats_summary(start_date: Optional[str] = None, end_date: Optional
     """일/주/월별 또는 특정 기간 수익 요약 조회"""
     stats = db.get_period_stats(start_date, end_date)
     return stats
+
+
+# ========== 사용자별 API (Multi-User Support) ==========
+
+@app.get("/api/user/me")
+async def get_current_user_info(user: Dict = Depends(require_auth)):
+    """현재 로그인한 사용자 정보 조회"""
+    return {
+        "user": user,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.get("/api/user/settings")
+async def get_user_settings(user: Dict = Depends(require_auth)):
+    """사용자 설정 조회"""
+    settings = user_manager.get_user_settings(user["id"])
+    if settings:
+        # API 키는 마스킹해서 반환
+        if settings.get("upbit_access_key"):
+            settings["upbit_access_key_masked"] = settings["upbit_access_key"][:8] + "..."
+        if settings.get("upbit_secret_key"):
+            settings["upbit_secret_key_masked"] = "********"
+        # 실제 키는 제거
+        settings.pop("upbit_access_key", None)
+        settings.pop("upbit_secret_key", None)
+    return {
+        "settings": settings,
+        "has_api_keys": bool(settings and settings.get("upbit_access_key_masked"))
+    }
+
+
+@app.post("/api/user/settings")
+async def save_user_settings(
+    request: UserSettingsRequest, 
+    user: Dict = Depends(require_auth)
+):
+    """사용자 설정 저장"""
+    settings = {}
+    
+    if request.upbit_access_key:
+        settings["upbit_access_key"] = request.upbit_access_key
+    if request.upbit_secret_key:
+        settings["upbit_secret_key"] = request.upbit_secret_key
+    if request.trade_amount:
+        settings["trade_amount"] = request.trade_amount
+    if request.max_positions:
+        settings["max_positions"] = request.max_positions
+    
+    # API 키 유효성 검증
+    if request.upbit_access_key and request.upbit_secret_key:
+        validation = user_manager.validate_upbit_keys(
+            request.upbit_access_key, 
+            request.upbit_secret_key
+        )
+        if not validation["valid"]:
+            raise HTTPException(status_code=400, detail=f"업비트 API 키 오류: {validation['error']}")
+    
+    success = user_manager.save_user_settings(user["id"], settings)
+    if not success:
+        raise HTTPException(status_code=500, detail="설정 저장 실패")
+    
+    return {"status": "success", "message": "설정이 저장되었습니다"}
+
+
+@app.get("/api/user/balance")
+async def get_user_balance(user: Dict = Depends(require_auth)):
+    """사용자별 잔고 조회"""
+    balances = user_manager.get_user_balances(user["id"])
+    if balances is None:
+        return {
+            "balances": [],
+            "total_krw": 0,
+            "error": "업비트 API 키를 설정해주세요",
+            "auth_status": "not_configured"
+        }
+    
+    # 잔고 데이터 정리
+    formatted_balances = []
+    total_krw = 0
+    
+    for b in balances:
+        currency = b.get("currency", "")
+        balance = float(b.get("balance", 0) or 0)
+        avg_buy_price = float(b.get("avg_buy_price", 0) or 0)
+        
+        if currency == "KRW":
+            total_krw += balance
+            formatted_balances.append({
+                "currency": currency,
+                "balance": balance,
+                "avg_buy_price": 0,
+                "eval_amount": balance,
+                "profit_rate": 0
+            })
+        elif balance > 0:
+            current_price = upbit_client.get_current_price(f"KRW-{currency}") or avg_buy_price
+            eval_amount = balance * current_price
+            profit_rate = ((current_price - avg_buy_price) / avg_buy_price * 100) if avg_buy_price > 0 else 0
+            
+            total_krw += eval_amount
+            formatted_balances.append({
+                "currency": currency,
+                "balance": balance,
+                "avg_buy_price": avg_buy_price,
+                "current_price": current_price,
+                "eval_amount": eval_amount,
+                "profit_rate": round(profit_rate, 2)
+            })
+    
+    return {
+        "balances": formatted_balances,
+        "total_krw": total_krw,
+        "timestamp": datetime.now().isoformat(),
+        "auth_status": "connected"
+    }
+
+
+@app.post("/api/user/trade/buy")
+async def user_buy(request: UserTradeRequest, user: Dict = Depends(require_auth)):
+    """사용자별 매수 실행"""
+    if not request.amount:
+        raise HTTPException(status_code=400, detail="매수 금액을 입력해주세요")
+    
+    result = user_manager.execute_buy(user["id"], request.ticker, request.amount)
+    
+    if result["success"]:
+        # 거래 기록 저장
+        user_manager.save_user_trade(user["id"], {
+            "market": request.ticker,
+            "trade_type": "buy",
+            "price": upbit_client.get_current_price(request.ticker) or 0,
+            "volume": result.get("volume", 0),
+            "amount": request.amount
+        })
+    
+    return result
+
+
+@app.post("/api/user/trade/sell")
+async def user_sell(request: UserTradeRequest, user: Dict = Depends(require_auth)):
+    """사용자별 매도 실행"""
+    result = user_manager.execute_sell(user["id"], request.ticker, request.volume)
+    
+    if result["success"]:
+        # 거래 기록 저장
+        user_manager.save_user_trade(user["id"], {
+            "market": request.ticker,
+            "trade_type": "sell",
+            "price": upbit_client.get_current_price(request.ticker) or 0,
+            "volume": result.get("volume", 0),
+            "amount": result.get("volume", 0) * (upbit_client.get_current_price(request.ticker) or 0)
+        })
+    
+    return result
+
+
+@app.get("/api/user/trades")
+async def get_user_trades(user: Dict = Depends(require_auth), limit: int = 50):
+    """사용자별 거래 기록 조회"""
+    trades = user_manager.get_user_trades(user["id"], limit)
+    return {
+        "trades": trades,
+        "count": len(trades)
+    }
+
+
+@app.post("/api/user/validate-keys")
+async def validate_api_keys(request: UserSettingsRequest, user: Dict = Depends(require_auth)):
+    """업비트 API 키 유효성 검증"""
+    if not request.upbit_access_key or not request.upbit_secret_key:
+        raise HTTPException(status_code=400, detail="API 키를 입력해주세요")
+    
+    result = user_manager.validate_upbit_keys(
+        request.upbit_access_key,
+        request.upbit_secret_key
+    )
+    return result
 
 
 # ========== 서버 실행 ==========
