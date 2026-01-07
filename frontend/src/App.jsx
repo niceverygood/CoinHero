@@ -396,6 +396,7 @@ function App() {
         user={user}
         settings={userSettings}
         onSave={handleSaveSettings}
+        session={session}
       />
 
       {/* ========== 시장 지수 바 ========== */}

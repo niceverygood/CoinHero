@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { X, Key, Eye, EyeOff, Save, AlertTriangle, CheckCircle } from 'lucide-react';
+import { X, Key, Eye, EyeOff, Save, AlertTriangle, CheckCircle, Wallet, RefreshCw } from 'lucide-react';
 
-export default function SettingsModal({ isOpen, onClose, user, settings, onSave }) {
+export default function SettingsModal({ isOpen, onClose, user, settings, onSave, session }) {
   const [formData, setFormData] = useState({
     upbit_access_key: '',
     upbit_secret_key: '',
@@ -14,6 +14,14 @@ export default function SettingsModal({ isOpen, onClose, user, settings, onSave 
   });
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
+  const [balances, setBalances] = useState(null);
+  const [loadingBalance, setLoadingBalance] = useState(false);
+  const [totalKRW, setTotalKRW] = useState(0);
+
+  // API Base URL
+  const API_BASE = window.location.hostname === 'localhost' 
+    ? 'http://localhost:8000' 
+    : 'https://coinhero-production.up.railway.app';
 
   useEffect(() => {
     if (settings) {
@@ -26,17 +34,59 @@ export default function SettingsModal({ isOpen, onClose, user, settings, onSave 
     }
   }, [settings]);
 
+  // API 키가 있으면 잔고 조회
+  useEffect(() => {
+    if (isOpen && session?.access_token) {
+      fetchBalance();
+    }
+  }, [isOpen, session]);
+
+  const fetchBalance = async () => {
+    if (!session?.access_token) return;
+    
+    setLoadingBalance(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/user/balance`, {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      });
+      const data = await res.json();
+      
+      if (data.auth_status === 'connected') {
+        setBalances(data.balances);
+        setTotalKRW(data.total_krw);
+      } else {
+        setBalances(null);
+      }
+    } catch (err) {
+      console.error('잔고 조회 실패:', err);
+      setBalances(null);
+    }
+    setLoadingBalance(false);
+  };
+
   const handleSave = async () => {
     setSaving(true);
     setMessage(null);
     try {
       await onSave(formData);
       setMessage({ type: 'success', text: '설정이 저장되었습니다!' });
-      setTimeout(() => setMessage(null), 3000);
+      // 저장 후 잔고 다시 조회
+      setTimeout(() => {
+        fetchBalance();
+        setMessage(null);
+      }, 1500);
     } catch (error) {
       setMessage({ type: 'error', text: '저장 실패: ' + error.message });
     }
     setSaving(false);
+  };
+
+  const formatKRW = (amount) => {
+    if (amount >= 100000000) return `${(amount / 100000000).toFixed(2)}억`;
+    if (amount >= 10000) return `${(amount / 10000).toFixed(0)}만`;
+    return amount.toLocaleString();
   };
 
   if (!isOpen) return null;
@@ -62,6 +112,68 @@ export default function SettingsModal({ isOpen, onClose, user, settings, onSave 
             <p className="text-sm text-zinc-400">로그인 계정</p>
             <p className="text-white font-medium">{user?.email}</p>
           </div>
+
+          {/* 계좌 정보 (API 연결 시) */}
+          {balances && balances.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-green-400 flex items-center gap-2">
+                  <Wallet className="w-4 h-4" />
+                  내 계좌
+                </h3>
+                <button
+                  onClick={fetchBalance}
+                  disabled={loadingBalance}
+                  className="p-1 hover:bg-zinc-700 rounded transition-colors"
+                >
+                  <RefreshCw className={`w-4 h-4 text-zinc-400 ${loadingBalance ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+              
+              {/* 총 자산 */}
+              <div className="p-3 bg-gradient-to-r from-green-500/20 to-cyan-500/20 border border-green-500/30 rounded-lg">
+                <p className="text-xs text-zinc-400">총 평가금액</p>
+                <p className="text-2xl font-bold text-white">{formatKRW(totalKRW)}원</p>
+              </div>
+              
+              {/* 보유 코인 목록 */}
+              <div className="space-y-2 max-h-40 overflow-y-auto">
+                {balances.map((coin) => (
+                  <div key={coin.currency} className="flex items-center justify-between p-2 bg-zinc-800/50 rounded-lg">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-white">{coin.currency}</span>
+                      {coin.currency !== 'KRW' && (
+                        <span className={`text-xs px-1.5 py-0.5 rounded ${
+                          coin.profit_rate > 0 ? 'bg-green-500/20 text-green-400' :
+                          coin.profit_rate < 0 ? 'bg-red-500/20 text-red-400' :
+                          'bg-zinc-700 text-zinc-400'
+                        }`}>
+                          {coin.profit_rate > 0 ? '+' : ''}{coin.profit_rate?.toFixed(2)}%
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-sm text-zinc-300">{formatKRW(coin.eval_amount)}원</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* API 미연결 안내 */}
+          {!balances && !loadingBalance && (
+            <div className="p-3 bg-zinc-800/50 border border-zinc-700 rounded-lg">
+              <p className="text-sm text-zinc-400 text-center">
+                업비트 API 키를 입력하면 계좌 정보가 표시됩니다
+              </p>
+            </div>
+          )}
+
+          {loadingBalance && (
+            <div className="p-3 bg-zinc-800/50 rounded-lg flex items-center justify-center">
+              <RefreshCw className="w-5 h-5 text-cyan-400 animate-spin mr-2" />
+              <span className="text-sm text-zinc-400">잔고 조회 중...</span>
+            </div>
+          )}
 
           {/* Upbit API Keys */}
           <div className="space-y-3">
