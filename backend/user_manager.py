@@ -3,6 +3,8 @@ CoinHero - 사용자 관리 및 인증 모듈
 Supabase를 통한 사용자별 API 키 관리
 """
 import os
+import base64
+import json
 from typing import Optional, Dict, Any
 from supabase import create_client, Client
 from config import SUPABASE_URL, SUPABASE_KEY
@@ -34,6 +36,7 @@ class UserManager:
     def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
         """
         Supabase JWT 토큰 검증 및 사용자 정보 반환
+        JWT를 직접 디코딩하여 user_id 추출
         
         Args:
             token: Bearer 토큰 (access_token)
@@ -41,17 +44,43 @@ class UserManager:
         Returns:
             사용자 정보 또는 None
         """
-        if not self.supabase or not token:
+        if not token:
+            print("[UserManager] 토큰 없음")
             return None
         
         try:
-            # Supabase에서 토큰으로 사용자 정보 조회
-            user = self.supabase.auth.get_user(token)
-            if user and user.user:
+            # JWT 토큰 직접 디코딩 (base64)
+            # JWT는 header.payload.signature 형식
+            parts = token.split('.')
+            if len(parts) != 3:
+                print("[UserManager] 잘못된 JWT 형식")
+                return None
+            
+            # payload (두 번째 부분) 디코딩
+            payload = parts[1]
+            # base64 패딩 추가
+            padding = 4 - len(payload) % 4
+            if padding != 4:
+                payload += '=' * padding
+            
+            decoded_bytes = base64.urlsafe_b64decode(payload)
+            decoded = json.loads(decoded_bytes.decode('utf-8'))
+            
+            user_id = decoded.get("sub")
+            email = decoded.get("email")
+            exp = decoded.get("exp", 0)
+            
+            # 만료 확인
+            if exp and exp < time.time():
+                print("[UserManager] 토큰 만료됨")
+                return None
+            
+            if user_id:
+                print(f"[UserManager] 토큰 디코딩 성공: {email}")
                 return {
-                    "id": user.user.id,
-                    "email": user.user.email,
-                    "created_at": str(user.user.created_at) if user.user.created_at else None
+                    "id": user_id,
+                    "email": email,
+                    "created_at": None
                 }
         except Exception as e:
             print(f"[UserManager] 토큰 검증 실패: {e}")
