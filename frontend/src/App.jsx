@@ -5,6 +5,9 @@ import {
   ChevronDown, X, AlertTriangle, CheckCircle2, Sparkles, LineChart,
   Layers, Shield, Flame, Eye, ArrowUpRight, ArrowDownRight
 } from 'lucide-react';
+import { supabase, signInWithGoogle, signOut, getUserSettings, saveUserSettings } from './supabase';
+import AuthButton from './components/AuthButton';
+import SettingsModal from './components/SettingsModal';
 
 // 프로덕션: Railway 백엔드, 개발: 로컬 프록시
 const API_BASE = import.meta.env.PROD 
@@ -41,6 +44,12 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
   
+  // 인증 상태
+  const [user, setUser] = useState(null);
+  const [userSettings, setUserSettings] = useState(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
+  
   // AI 자동매매 상태
   const [isRunning, setIsRunning] = useState(false);
   const [selectedStrategies, setSelectedStrategies] = useState(['max_profit', 'momentum_breakout', 'rsi_reversal']);
@@ -61,6 +70,64 @@ function App() {
   // 포지션 모니터링
   const [positionDetails, setPositionDetails] = useState([]);
   const [sellStrategyConfig, setSellStrategyConfig] = useState(null);
+
+  // 인증 상태 감지
+  useEffect(() => {
+    // 현재 세션 확인
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        loadUserSettings(session.user.id);
+      }
+      setAuthLoading(false);
+    });
+
+    // 인증 상태 변경 감지
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        loadUserSettings(session.user.id);
+      } else {
+        setUserSettings(null);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // 사용자 설정 로드
+  const loadUserSettings = async (userId) => {
+    const { data, error } = await getUserSettings(userId);
+    if (data) {
+      setUserSettings(data);
+      // 설정값 적용
+      if (data.default_trade_amount) setTradeAmount(data.default_trade_amount);
+      if (data.max_positions) setMaxPositions(data.max_positions);
+    }
+  };
+
+  // 로그인 핸들러
+  const handleLogin = async () => {
+    await signInWithGoogle();
+  };
+
+  // 로그아웃 핸들러
+  const handleLogout = async () => {
+    await signOut();
+    setUser(null);
+    setUserSettings(null);
+  };
+
+  // 설정 저장 핸들러
+  const handleSaveSettings = async (settings) => {
+    if (!user) return;
+    const { data, error } = await saveUserSettings(user.id, settings);
+    if (error) throw error;
+    setUserSettings(data);
+    // 설정값 적용
+    if (data.default_trade_amount) setTradeAmount(data.default_trade_amount);
+    if (data.max_positions) setMaxPositions(data.max_positions);
+  };
 
   // 시간 업데이트
   useEffect(() => {
@@ -310,9 +377,26 @@ function App() {
               <RefreshCw className="w-4 h-4" />
               <span className="text-sm">새로고침</span>
             </button>
+            
+            {/* 로그인/사용자 버튼 */}
+            <AuthButton 
+              user={user}
+              onLogin={handleLogin}
+              onLogout={handleLogout}
+              onSettings={() => setShowSettings(true)}
+            />
           </div>
         </div>
       </header>
+      
+      {/* 설정 모달 */}
+      <SettingsModal
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+        user={user}
+        settings={userSettings}
+        onSave={handleSaveSettings}
+      />
 
       {/* ========== 시장 지수 바 ========== */}
       <div className="bg-[#12121a] border-b border-gray-800 px-4 py-3">
