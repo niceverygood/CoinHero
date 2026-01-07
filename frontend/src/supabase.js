@@ -46,7 +46,7 @@ export const saveUserSettings = async (userId, settings) => {
       user_id: userId,
       ...settings,
       updated_at: new Date().toISOString()
-    })
+    }, { onConflict: 'user_id' })
     .select()
     .single()
   return { data, error }
