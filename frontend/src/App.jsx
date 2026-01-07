@@ -203,7 +203,11 @@ function App() {
     let reconnectTimeout;
 
     const connect = () => {
-      ws = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
+      // 프로덕션: Railway WSS, 개발: 로컬 WS
+      const wsUrl = import.meta.env.PROD
+        ? 'wss://coinhero-production.up.railway.app/ws'
+        : `ws://${window.location.hostname}:8000/ws`;
+      ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
         setIsConnected(true);
