@@ -46,9 +46,15 @@ function App() {
   
   // 인증 상태
   const [user, setUser] = useState(null);
+  const [session, setSession] = useState(null);
   const [userSettings, setUserSettings] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
+  
+  // 사용자별 데이터
+  const [userBalances, setUserBalances] = useState([]);
+  const [userTotalKRW, setUserTotalKRW] = useState(0);
+  const [userTrades, setUserTrades] = useState([]);
   
   // AI 자동매매 상태
   const [isRunning, setIsRunning] = useState(false);
@@ -75,25 +81,71 @@ function App() {
   useEffect(() => {
     // 현재 세션 확인
     supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
         loadUserSettings(session.user.id);
+        fetchUserData(session.access_token);
       }
       setAuthLoading(false);
     });
 
     // 인증 상태 변경 감지
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
         loadUserSettings(session.user.id);
+        fetchUserData(session.access_token);
       } else {
         setUserSettings(null);
+        setUserBalances([]);
+        setUserTotalKRW(0);
+        setUserTrades([]);
       }
     });
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // 사용자별 데이터 조회
+  const fetchUserData = async (accessToken) => {
+    if (!accessToken) return;
+    
+    try {
+      // 잔고 조회
+      const balanceRes = await fetch(`${API_BASE}/api/user/balance`, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      const balanceData = await balanceRes.json();
+      
+      if (balanceData.auth_status === 'connected') {
+        setUserBalances(balanceData.balances || []);
+        setUserTotalKRW(balanceData.total_krw || 0);
+      }
+      
+      // 거래 기록 조회
+      const tradesRes = await fetch(`${API_BASE}/api/user/trades?limit=50`, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      const tradesData = await tradesRes.json();
+      setUserTrades(tradesData.trades || []);
+      
+    } catch (err) {
+      console.error('사용자 데이터 조회 실패:', err);
+    }
+  };
+
+  // 주기적으로 사용자 데이터 갱신
+  useEffect(() => {
+    if (!session?.access_token) return;
+    
+    const interval = setInterval(() => {
+      fetchUserData(session.access_token);
+    }, 30000); // 30초마다 갱신
+    
+    return () => clearInterval(interval);
+  }, [session]);
 
   // 사용자 설정 로드
   const loadUserSettings = async (userId) => {
@@ -426,25 +478,144 @@ function App() {
             </div>
           </div>
           
-          {/* 예수금 */}
+          {/* 예수금 (사용자별) */}
           <div className="bg-[#1a1a2e] rounded-xl p-4">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-gray-400 text-sm">예수금 (주문가능)</span>
+              <span className="text-gray-400 text-sm">{user ? '내 예수금' : '예수금'}</span>
               <DollarSign className="w-4 h-4 text-gray-500" />
             </div>
-            <div className="text-2xl font-bold">{krwBalance.toLocaleString()}<span className="text-sm text-gray-400 ml-1">원</span></div>
+            <div className="text-2xl font-bold">
+              {user && userBalances.length > 0 
+                ? (userBalances.find(b => b.currency === 'KRW')?.balance || 0).toLocaleString()
+                : krwBalance.toLocaleString()}
+              <span className="text-sm text-gray-400 ml-1">원</span>
+            </div>
           </div>
           
-          {/* 총 평가금액 */}
+          {/* 총 평가금액 (사용자별) */}
           <div className="bg-[#1a1a2e] rounded-xl p-4">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-gray-400 text-sm">총 평가금액</span>
+              <span className="text-gray-400 text-sm">{user ? '내 총 평가' : '총 평가금액'}</span>
               <Target className="w-4 h-4 text-gray-500" />
             </div>
-            <div className="text-2xl font-bold text-cyan-400">{totalValue.toLocaleString()}<span className="text-sm text-gray-400 ml-1">원</span></div>
+            <div className="text-2xl font-bold text-cyan-400">
+              {user ? userTotalKRW.toLocaleString() : totalValue.toLocaleString()}
+              <span className="text-sm text-gray-400 ml-1">원</span>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* ========== 사용자 계좌 정보 (로그인 시) ========== */}
+      {user && userBalances.length > 0 && (
+        <div className="bg-[#12121a] border-b border-gray-800 px-4 py-4">
+          <div className="max-w-[1800px] mx-auto">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-bold flex items-center gap-2">
+                <DollarSign className="w-5 h-5 text-green-400" />
+                내 보유 코인
+              </h3>
+              <button 
+                onClick={() => fetchUserData(session?.access_token)}
+                className="text-sm text-gray-400 hover:text-white flex items-center gap-1"
+              >
+                <RefreshCw className="w-4 h-4" />
+                새로고침
+              </button>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+              {userBalances.filter(b => b.currency !== 'KRW' && b.eval_amount > 1000).map((coin) => (
+                <div key={coin.currency} className="bg-[#1a1a2e] rounded-xl p-3 border border-gray-800 hover:border-cyan-500/30 transition-colors">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-bold text-white">{coin.currency}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                      coin.profit_rate > 0 ? 'bg-green-500/20 text-green-400' :
+                      coin.profit_rate < 0 ? 'bg-red-500/20 text-red-400' :
+                      'bg-gray-500/20 text-gray-400'
+                    }`}>
+                      {coin.profit_rate > 0 ? '+' : ''}{coin.profit_rate?.toFixed(2)}%
+                    </span>
+                  </div>
+                  <div className="text-sm text-gray-400">
+                    {coin.eval_amount?.toLocaleString()}원
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    평균가: {coin.avg_buy_price?.toLocaleString()}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========== 거래 로그 (로그인 시) ========== */}
+      {user && userTrades.length > 0 && (
+        <div className="bg-[#12121a] border-b border-gray-800 px-4 py-4">
+          <div className="max-w-[1800px] mx-auto">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-bold flex items-center gap-2">
+                <Activity className="w-5 h-5 text-cyan-400" />
+                최근 거래 내역
+              </h3>
+              <span className="text-sm text-gray-400">{userTrades.length}건</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-gray-400 border-b border-gray-800">
+                    <th className="text-left py-2 px-3">시간</th>
+                    <th className="text-left py-2 px-3">종목</th>
+                    <th className="text-left py-2 px-3">유형</th>
+                    <th className="text-right py-2 px-3">가격</th>
+                    <th className="text-right py-2 px-3">금액</th>
+                    <th className="text-right py-2 px-3">수익률</th>
+                    <th className="text-left py-2 px-3">전략</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {userTrades.slice(0, 10).map((trade, idx) => (
+                    <tr key={idx} className="border-b border-gray-800/50 hover:bg-[#1a1a2e]">
+                      <td className="py-2 px-3 text-gray-400">
+                        {trade.executed_at ? new Date(trade.executed_at).toLocaleString('ko-KR', { 
+                          month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' 
+                        }) : '-'}
+                      </td>
+                      <td className="py-2 px-3 font-medium text-white">
+                        {trade.market?.replace('KRW-', '') || '-'}
+                      </td>
+                      <td className="py-2 px-3">
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          trade.trade_type === 'buy' 
+                            ? 'bg-green-500/20 text-green-400' 
+                            : 'bg-red-500/20 text-red-400'
+                        }`}>
+                          {trade.trade_type === 'buy' ? '매수' : '매도'}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3 text-right text-gray-300">
+                        {trade.price?.toLocaleString() || '-'}
+                      </td>
+                      <td className="py-2 px-3 text-right text-gray-300">
+                        {trade.amount?.toLocaleString() || '-'}원
+                      </td>
+                      <td className={`py-2 px-3 text-right font-medium ${
+                        (trade.profit_rate || 0) > 0 ? 'text-green-400' :
+                        (trade.profit_rate || 0) < 0 ? 'text-red-400' : 'text-gray-400'
+                      }`}>
+                        {trade.profit_rate ? `${trade.profit_rate > 0 ? '+' : ''}${trade.profit_rate.toFixed(2)}%` : '-'}
+                      </td>
+                      <td className="py-2 px-3 text-gray-400 text-xs">
+                        {trade.strategy || trade.ai_model || '-'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ========== 메인 컨텐츠 ========== */}
       <div className="max-w-[1800px] mx-auto p-4">
