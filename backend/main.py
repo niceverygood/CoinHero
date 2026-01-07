@@ -1244,8 +1244,11 @@ async def save_user_settings(
 @app.get("/api/user/balance")
 async def get_user_balance(user: Dict = Depends(require_auth)):
     """사용자별 잔고 조회"""
+    print(f"[API] /api/user/balance 요청: user_id={user.get('id')}, email={user.get('email')}")
     balances = user_manager.get_user_balances(user["id"])
+    print(f"[API] 잔고 조회 결과: {type(balances)}, count={len(balances) if balances else 0}")
     if balances is None:
+        print(f"[API] 잔고 조회 실패: API 키 미설정 또는 Upbit 연결 실패")
         return {
             "balances": [],
             "total_krw": 0,

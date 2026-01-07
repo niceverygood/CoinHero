@@ -98,9 +98,11 @@ class UserManager:
             사용자 설정 딕셔너리
         """
         if not self.supabase:
+            print(f"[UserManager] Supabase 클라이언트 없음")
             return None
         
         try:
+            print(f"[UserManager] 사용자 설정 조회 중: user_id={user_id}")
             result = self.supabase.table("user_settings") \
                 .select("*") \
                 .eq("user_id", user_id) \
@@ -108,7 +110,14 @@ class UserManager:
                 .execute()
             
             if result.data:
+                print(f"[UserManager] 설정 조회 성공: {result.data.keys()}")
+                # access_key가 있는지 확인
+                has_access = bool(result.data.get("upbit_access_key"))
+                has_secret = bool(result.data.get("upbit_secret_key"))
+                print(f"[UserManager] API 키 존재: access={has_access}, secret={has_secret}")
                 return result.data
+            else:
+                print(f"[UserManager] 설정 없음 (빈 결과)")
         except Exception as e:
             print(f"[UserManager] 설정 조회 실패: {e}")
         
