@@ -148,6 +148,7 @@ export default function SettingsModal({ isOpen, onClose, user, settings, onSave 
                   <option value={3}>3개</option>
                   <option value={5}>5개</option>
                   <option value={10}>10개</option>
+                  <option value={0}>제한 없음</option>
                 </select>
               </div>
             </div>
