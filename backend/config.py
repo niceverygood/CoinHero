@@ -27,7 +27,7 @@ RSI_OVERBOUGHT = 70 # RSI 과매수 기준
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-# Supabase (DB)
-SUPABASE_URL = os.getenv("SUPABASE_URL", "https://lbnvztnbsbqisemvkvwe.supabase.co")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxibnZ6dG5ic2JxaXNlbXZrdndlIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2Nzc2Nzk0MCwiZXhwIjoyMDgzMzQzOTQwfQ.e7CiDAtFnGNRu65XAVA_z9njXhL-bnCWQ2kKWR9tm1k")  # service_role key
+# Supabase (DB) - 빈 문자열인 경우에도 기본값 사용
+SUPABASE_URL = os.getenv("SUPABASE_URL") or "https://lbnvztnbsbqisemvkvwe.supabase.co"
+SUPABASE_KEY = os.getenv("SUPABASE_KEY") or "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxibnZ6dG5ic2JxaXNlbXZrdndlIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2Nzc2Nzk0MCwiZXhwIjoyMDgzMzQzOTQwfQ.e7CiDAtFnGNRu65XAVA_z9njXhL-bnCWQ2kKWR9tm1k"  # service_role key
 
