@@ -9,6 +9,7 @@ import { supabase, signInWithGoogle, signOut, getUserSettings, saveUserSettings 
 import AuthButton from './components/AuthButton';
 import SettingsModal from './components/SettingsModal';
 import AIDebatePanel from './components/AIDebatePanel';
+import AIRecommendation from './components/AIRecommendation';
 
 // 프로덕션: Railway 백엔드, 개발: 로컬 프록시
 const API_BASE = import.meta.env.PROD 
@@ -77,6 +78,9 @@ function App() {
   // 포지션 모니터링
   const [positionDetails, setPositionDetails] = useState([]);
   const [sellStrategyConfig, setSellStrategyConfig] = useState(null);
+  
+  // 메뉴 탭 상태
+  const [activeTab, setActiveTab] = useState('recommend'); // 'recommend' | 'trading'
 
   // 인증 상태 감지
   useEffect(() => {
@@ -422,14 +426,47 @@ function App() {
       {/* ========== 상단 헤더 ========== */}
       <header className="bg-[#12121a] border-b border-gray-800 px-4 py-3">
         <div className="max-w-[1800px] mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Zap className="w-6 h-6 text-cyan-400" />
-            <h1 className="text-xl font-bold">AI 자동매매</h1>
-            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-              isRunning ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'
-            }`}>
-              {isRunning ? '● 실행중' : '○ 대기중'}
-            </span>
+          <div className="flex items-center gap-6">
+            {/* 로고 & 타이틀 */}
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center">
+                <Zap className="w-6 h-6 text-white" />
+              </div>
+              <h1 className="text-2xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
+                CoinHero
+              </h1>
+            </div>
+            
+            {/* 메뉴 탭 */}
+            <nav className="flex items-center gap-1 bg-[#1a1a2e] p-1 rounded-xl">
+              <button
+                onClick={() => setActiveTab('recommend')}
+                className={`px-4 py-2 rounded-lg font-medium text-sm transition-all ${
+                  activeTab === 'recommend'
+                    ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-lg'
+                    : 'text-gray-400 hover:text-white hover:bg-[#252538]'
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4" />
+                  AI 코인추천
+                </span>
+              </button>
+              <button
+                onClick={() => setActiveTab('trading')}
+                className={`px-4 py-2 rounded-lg font-medium text-sm transition-all ${
+                  activeTab === 'trading'
+                    ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg'
+                    : 'text-gray-400 hover:text-white hover:bg-[#252538]'
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <Brain className="w-4 h-4" />
+                  AI 자동거래
+                  {isRunning && <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />}
+                </span>
+              </button>
+            </nav>
           </div>
           
           <div className="flex items-center gap-4">
@@ -646,6 +683,14 @@ function App() {
       {/* ========== 메인 컨텐츠 ========== */}
       <div className="max-w-[1800px] mx-auto p-4">
         
+        {/* AI 코인추천 탭 */}
+        {activeTab === 'recommend' && (
+          <AIRecommendation />
+        )}
+        
+        {/* AI 자동거래 탭 */}
+        {activeTab === 'trading' && (
+          <>
         {/* AI 자동매매 컨트롤 패널 */}
         <div className="bg-gradient-to-r from-[#1a1a2e] to-[#16162a] rounded-2xl p-6 mb-6 border border-cyan-500/20">
           <div className="flex items-start justify-between mb-6">
@@ -1127,6 +1172,8 @@ function App() {
             )}
           </div>
         </div>
+          </>
+        )}
       </div>
 
       {/* ========== 푸터 ========== */}
