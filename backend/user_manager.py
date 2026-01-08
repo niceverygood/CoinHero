@@ -171,14 +171,23 @@ class UserManager:
         
         # 설정 조회
         settings = self.get_user_settings(user_id)
-        if not settings:
-            return None
         
-        access_key = settings.get("upbit_access_key")
-        secret_key = settings.get("upbit_secret_key")
+        access_key = None
+        secret_key = None
         
+        if settings:
+            access_key = settings.get("upbit_access_key")
+            secret_key = settings.get("upbit_secret_key")
+        
+        # 사용자 설정이 없으면 환경변수 기본값 사용
         if not access_key or not secret_key:
-            return None
+            from config import UPBIT_ACCESS_KEY, UPBIT_SECRET_KEY
+            if UPBIT_ACCESS_KEY and UPBIT_SECRET_KEY:
+                print(f"[UserManager] 사용자 {user_id}의 API 키 없음, 기본 API 키 사용")
+                access_key = UPBIT_ACCESS_KEY
+                secret_key = UPBIT_SECRET_KEY
+            else:
+                return None
         
         try:
             client = pyupbit.Upbit(access_key, secret_key)
