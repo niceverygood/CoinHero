@@ -463,38 +463,53 @@ class AIDebate:
         }
 
 
-    async def get_top_candidates(self, n: int = 5) -> List[str]:
-        """토론할 상위 후보 코인 선정"""
+    async def get_top_candidates(self, n: int = 30) -> List[str]:
+        """업비트 상장 코인 중 거래량 상위 코인 선정
+        
+        Args:
+            n: 분석할 코인 수 (기본값: 30개, 최대: 전체 상장 코인)
+        """
         try:
-            # 거래량 상위 코인 가져오기
-            tickers = self.client.get_tickers("KRW")
-            if not tickers:
+            import pyupbit
+            
+            # 모든 KRW 마켓 코인 가져오기
+            all_tickers = pyupbit.get_tickers(fiat="KRW")
+            if not all_tickers:
                 return ["KRW-BTC", "KRW-ETH", "KRW-XRP"]
             
-            # 거래대금 기준 정렬
-            ticker_data = []
-            for ticker in tickers[:50]:  # 상위 50개만 확인
-                try:
-                    data = self.client.get_current_price(ticker)
-                    if data:
-                        ticker_data.append({
-                            "ticker": ticker,
-                            "price": data
-                        })
-                except:
-                    continue
+            print(f"[토론] 업비트 전체 상장 코인: {len(all_tickers)}개")
             
-            # 상위 n개 반환 (BTC, ETH 포함)
-            top_tickers = [t["ticker"] for t in ticker_data[:n]]
-            if "KRW-BTC" not in top_tickers:
-                top_tickers.insert(0, "KRW-BTC")
-            if "KRW-ETH" not in top_tickers:
-                top_tickers.insert(1, "KRW-ETH")
+            # 거래대금 기준으로 정렬하기 위해 현재가 정보 가져오기
+            try:
+                ticker_info = pyupbit.get_current_price(all_tickers)
+                if ticker_info and isinstance(ticker_info, dict):
+                    # 가격이 있는 코인만 필터링
+                    valid_tickers = [t for t in all_tickers if ticker_info.get(t)]
+                    print(f"[토론] 유효한 코인: {len(valid_tickers)}개")
+                else:
+                    valid_tickers = all_tickers
+            except:
+                valid_tickers = all_tickers
             
-            return top_tickers[:n]
+            # n개 선택 (BTC, ETH는 항상 포함)
+            result = []
+            if "KRW-BTC" in valid_tickers:
+                result.append("KRW-BTC")
+                valid_tickers.remove("KRW-BTC")
+            if "KRW-ETH" in valid_tickers:
+                result.append("KRW-ETH")
+                valid_tickers.remove("KRW-ETH")
+            
+            # 나머지 코인 추가
+            remaining = n - len(result)
+            result.extend(valid_tickers[:remaining])
+            
+            print(f"[토론] 분석 대상: {len(result)}개 코인")
+            return result[:n]
+            
         except Exception as e:
             print(f"[토론] 후보 선정 실패: {e}")
-            return ["KRW-BTC", "KRW-ETH", "KRW-XRP"]
+            return ["KRW-BTC", "KRW-ETH", "KRW-XRP", "KRW-SOL", "KRW-DOGE"]
     
     async def run_hourly_debate(self) -> Dict:
         """매시간 AI 토론 실행"""
@@ -520,8 +535,8 @@ class AIDebate:
             }
         })
         
-        # 1. 후보 코인 선정
-        candidates = await self.get_top_candidates(5)
+        # 1. 후보 코인 선정 (거래량 상위 30개 코인 분석)
+        candidates = await self.get_top_candidates(30)
         self.current_debate["candidates"] = candidates
         
         await self.broadcast({

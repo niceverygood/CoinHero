@@ -44,7 +44,7 @@ export default function AIRecommendation() {
       const [statusRes, latestRes, picksRes] = await Promise.all([
         fetch(`${API_BASE}/api/debate/status`),
         fetch(`${API_BASE}/api/debate/latest`),
-        fetch(`${API_BASE}/api/debate/top-picks?n=10`)
+        fetch(`${API_BASE}/api/debate/top-picks?n=30`)
       ]);
       
       const status = await statusRes.json();
@@ -109,7 +109,10 @@ export default function AIRecommendation() {
               </div>
               <div>
                 <h2 className="text-2xl font-bold text-white">AI 코인추천</h2>
-                <p className="text-gray-400 text-sm">3개 AI가 실시간 토론하여 추천합니다</p>
+                <p className="text-gray-400 text-sm">3개 AI가 업비트 상장 코인을 실시간 분석합니다</p>
+                <p className="text-cyan-400 text-xs mt-1">
+                  📊 분석 대상: 거래량 상위 30개 코인
+                </p>
               </div>
             </div>
             
@@ -158,27 +161,110 @@ export default function AIRecommendation() {
         </div>
       </div>
 
-      {/* 추천 코인 그리드 */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {latestDebate?.results?.map((result, idx) => (
-          <CoinRecommendCard key={result.ticker || idx} result={result} rank={idx + 1} />
-        ))}
-        
-        {(!latestDebate?.results || latestDebate.results.length === 0) && (
-          <div className="col-span-full bg-[#1a1a2e] rounded-2xl p-12 border border-gray-800 text-center">
-            <Brain className="w-16 h-16 text-gray-600 mx-auto mb-4" />
-            <h3 className="text-xl font-bold text-gray-400 mb-2">아직 분석 결과가 없습니다</h3>
-            <p className="text-gray-500 mb-6">위의 "즉시 분석" 버튼을 클릭하여 AI 토론을 시작하세요</p>
-            <button
-              onClick={runDebateNow}
-              disabled={isDebating}
-              className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-xl font-medium"
-            >
-              AI 분석 시작하기
-            </button>
+      {/* 추천 결과 요약 */}
+      {latestDebate?.results?.length > 0 && (
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          <div className="bg-gradient-to-br from-green-500/20 to-emerald-500/10 rounded-2xl p-4 border border-green-500/30">
+            <div className="flex items-center gap-2 mb-2">
+              <TrendingUp className="w-5 h-5 text-green-400" />
+              <span className="font-bold text-green-400">매수 추천</span>
+            </div>
+            <p className="text-3xl font-bold text-white">
+              {latestDebate.results.filter(r => r.consensus?.action === 'BUY').length}
+            </p>
+            <p className="text-gray-400 text-sm">종목</p>
           </div>
-        )}
-      </div>
+          <div className="bg-gradient-to-br from-gray-500/20 to-slate-500/10 rounded-2xl p-4 border border-gray-500/30">
+            <div className="flex items-center gap-2 mb-2">
+              <Minus className="w-5 h-5 text-gray-400" />
+              <span className="font-bold text-gray-400">관망</span>
+            </div>
+            <p className="text-3xl font-bold text-white">
+              {latestDebate.results.filter(r => r.consensus?.action === 'HOLD').length}
+            </p>
+            <p className="text-gray-400 text-sm">종목</p>
+          </div>
+          <div className="bg-gradient-to-br from-red-500/20 to-rose-500/10 rounded-2xl p-4 border border-red-500/30">
+            <div className="flex items-center gap-2 mb-2">
+              <TrendingDown className="w-5 h-5 text-red-400" />
+              <span className="font-bold text-red-400">매도 추천</span>
+            </div>
+            <p className="text-3xl font-bold text-white">
+              {latestDebate.results.filter(r => r.consensus?.action === 'SELL').length}
+            </p>
+            <p className="text-gray-400 text-sm">종목</p>
+          </div>
+        </div>
+      )}
+
+      {/* 매수 추천 코인 */}
+      {latestDebate?.results?.filter(r => r.consensus?.action === 'BUY').length > 0 && (
+        <div className="mb-6">
+          <h3 className="text-lg font-bold text-green-400 mb-4 flex items-center gap-2">
+            <TrendingUp className="w-5 h-5" />
+            매수 추천 ({latestDebate.results.filter(r => r.consensus?.action === 'BUY').length}종목)
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {latestDebate.results
+              .filter(r => r.consensus?.action === 'BUY')
+              .sort((a, b) => (b.consensus?.confidence || 0) - (a.consensus?.confidence || 0))
+              .map((result, idx) => (
+                <CoinRecommendCard key={result.ticker || idx} result={result} rank={idx + 1} />
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* 관망 코인 */}
+      {latestDebate?.results?.filter(r => r.consensus?.action === 'HOLD').length > 0 && (
+        <div className="mb-6">
+          <h3 className="text-lg font-bold text-gray-400 mb-4 flex items-center gap-2">
+            <Minus className="w-5 h-5" />
+            관망 ({latestDebate.results.filter(r => r.consensus?.action === 'HOLD').length}종목)
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+            {latestDebate.results
+              .filter(r => r.consensus?.action === 'HOLD')
+              .map((result, idx) => (
+                <CoinRecommendCardSmall key={result.ticker || idx} result={result} />
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* 매도 추천 코인 */}
+      {latestDebate?.results?.filter(r => r.consensus?.action === 'SELL').length > 0 && (
+        <div className="mb-6">
+          <h3 className="text-lg font-bold text-red-400 mb-4 flex items-center gap-2">
+            <TrendingDown className="w-5 h-5" />
+            매도 추천 ({latestDebate.results.filter(r => r.consensus?.action === 'SELL').length}종목)
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {latestDebate.results
+              .filter(r => r.consensus?.action === 'SELL')
+              .sort((a, b) => (b.consensus?.confidence || 0) - (a.consensus?.confidence || 0))
+              .map((result, idx) => (
+                <CoinRecommendCard key={result.ticker || idx} result={result} rank={idx + 1} />
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* 분석 결과 없음 */}
+      {(!latestDebate?.results || latestDebate.results.length === 0) && (
+        <div className="bg-[#1a1a2e] rounded-2xl p-12 border border-gray-800 text-center">
+          <Brain className="w-16 h-16 text-gray-600 mx-auto mb-4" />
+          <h3 className="text-xl font-bold text-gray-400 mb-2">아직 분석 결과가 없습니다</h3>
+          <p className="text-gray-500 mb-6">위의 "즉시 분석" 버튼을 클릭하여 AI 토론을 시작하세요</p>
+          <button
+            onClick={runDebateNow}
+            disabled={isDebating}
+            className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-xl font-medium"
+          >
+            AI 분석 시작하기
+          </button>
+        </div>
+      )}
 
       {/* 토론 요약 */}
       {latestDebate?.summary && (
@@ -190,6 +276,22 @@ export default function AIRecommendation() {
           <p className="text-gray-300 leading-relaxed">{latestDebate.summary}</p>
         </div>
       )}
+    </div>
+  );
+}
+
+// 작은 코인 카드 컴포넌트 (관망용)
+function CoinRecommendCardSmall({ result }) {
+  const consensus = result.consensus || {};
+  const confidence = consensus.confidence || 50;
+  const coinName = result.ticker?.replace('KRW-', '') || 'Unknown';
+  
+  return (
+    <div className="bg-[#1a1a2e] rounded-xl p-3 border border-gray-800 hover:border-gray-600 transition-all">
+      <div className="flex items-center justify-between">
+        <span className="font-bold text-white">{coinName}</span>
+        <span className="text-gray-400 text-sm">{confidence}%</span>
+      </div>
     </div>
   );
 }
