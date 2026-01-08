@@ -8,6 +8,7 @@ import {
 import { supabase, signInWithGoogle, signOut, getUserSettings, saveUserSettings } from './supabase';
 import AuthButton from './components/AuthButton';
 import SettingsModal from './components/SettingsModal';
+import AIDebatePanel from './components/AIDebatePanel';
 
 // 프로덕션: Railway 백엔드, 개발: 로컬 프록시
 const API_BASE = import.meta.env.PROD 
@@ -192,12 +193,14 @@ function App() {
     try {
       const res = await fetch(`${API_BASE}/api/balance`);
       const data = await res.json();
+      console.log('💰 잔고 API 응답:', data);
       const balanceList = data.balances || [];
       setBalances(balanceList);
       setTotalValue(data.total_krw || 0);
       
       // KRW 잔고 찾기
       const krw = balanceList.find(b => b.currency === 'KRW');
+      console.log('💵 KRW 잔고:', krw?.balance);
       setKrwBalance(krw?.balance || 0);
     } catch (e) {
       console.error('잔고 조회 실패:', e);
@@ -305,6 +308,25 @@ function App() {
       setIsRunning(false);
     } catch (e) {
       console.error('중지 실패:', e);
+    }
+  };
+
+  // 즉시 스캔 - AI 분석 포함
+  const handleManualScan = async () => {
+    try {
+      console.log('🔍 즉시 스캔 시작...');
+      const res = await fetch(`${API_BASE}/api/scalping/scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      console.log('📊 스캔 결과:', data);
+      // 스캔 후 상태 업데이트
+      await fetchAIStatus();
+      await fetchAILogs();
+      await fetchPositionDetails();
+    } catch (e) {
+      console.error('스캔 실패:', e);
     }
   };
 
@@ -485,8 +507,8 @@ function App() {
               <DollarSign className="w-4 h-4 text-gray-500" />
             </div>
             <div className="text-2xl font-bold">
-              {user && userBalances.length > 0 
-                ? (userBalances.find(b => b.currency === 'KRW')?.balance || 0).toLocaleString()
+              {(user && userBalances.length > 0)
+                ? (userBalances.find(b => b.currency === 'KRW')?.balance || krwBalance).toLocaleString()
                 : krwBalance.toLocaleString()}
               <span className="text-sm text-gray-400 ml-1">원</span>
             </div>
@@ -499,7 +521,7 @@ function App() {
               <Target className="w-4 h-4 text-gray-500" />
             </div>
             <div className="text-2xl font-bold text-cyan-400">
-              {user ? userTotalKRW.toLocaleString() : totalValue.toLocaleString()}
+              {(user && userTotalKRW > 0) ? userTotalKRW.toLocaleString() : totalValue.toLocaleString()}
               <span className="text-sm text-gray-400 ml-1">원</span>
             </div>
           </div>
@@ -656,7 +678,7 @@ function App() {
             {/* 우측: 액션 버튼들 */}
             <div className="flex items-center gap-3">
               <button 
-                onClick={() => { fetchAIStatus(); fetchMarketPrices(); }}
+                onClick={handleManualScan}
                 className="px-4 py-3 bg-[#252538] hover:bg-[#2d2d45] rounded-xl flex items-center gap-2 transition-colors"
               >
                 <Search className="w-4 h-4" />
@@ -827,6 +849,11 @@ function App() {
               );
             })}
           </div>
+        </div>
+
+        {/* ========== 🎭 AI 3대장 토론 ========== */}
+        <div className="mb-4">
+          <AIDebatePanel />
         </div>
 
         {/* ========== 📊 포지션 모니터링 (이동됨) ========== */}

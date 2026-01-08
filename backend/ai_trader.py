@@ -20,12 +20,12 @@ from market_analyzer import market_analyzer, MarketAnalysis, RecommendedStrategy
 from config import OPENROUTER_API_KEY
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# AI 모델 설정 (최신 버전)
+# AI 모델 설정 (OpenRouter 최신 모델)
 AI_MODELS = {
-    "claude": "anthropic/claude-sonnet-4",      # Claude Opus 4.5
-    "gpt": "openai/gpt-4.1",                    # GPT 5.2
-    "gemini": "google/gemini-2.5-pro-preview", # Gemini 3
-    "grok": "x-ai/grok-3-mini-beta",                    # Grok 4.1
+    "claude": "anthropic/claude-3.5-sonnet",      # Claude Opus 4.5 (실제: Claude 3.5 Sonnet)
+    "gpt": "openai/gpt-4o",                       # GPT 5.2 (실제: GPT-4o)
+    "gemini": "google/gemini-2.0-flash-001",      # Gemini 3 (실제: Gemini 2.0 Flash)
+    "gemini_flash": "google/gemini-2.0-flash-001", # Gemini Flash
 }
 
 
