@@ -500,29 +500,33 @@ function App() {
             </div>
           </div>
           
-          {/* 예수금 (사용자별) */}
+          {/* 예수금 (로그인 시에만 표시) */}
           <div className="bg-[#1a1a2e] rounded-xl p-4">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-gray-400 text-sm">{user ? '내 예수금' : '예수금'}</span>
+              <span className="text-gray-400 text-sm">내 예수금</span>
               <DollarSign className="w-4 h-4 text-gray-500" />
             </div>
             <div className="text-2xl font-bold">
-              {(user && userBalances.length > 0)
-                ? (userBalances.find(b => b.currency === 'KRW')?.balance || krwBalance).toLocaleString()
-                : krwBalance.toLocaleString()}
-              <span className="text-sm text-gray-400 ml-1">원</span>
+              {user 
+                ? ((userBalances.length > 0 
+                    ? userBalances.find(b => b.currency === 'KRW')?.balance 
+                    : krwBalance) || 0).toLocaleString()
+                : <span className="text-gray-500 text-base">로그인 필요</span>}
+              {user && <span className="text-sm text-gray-400 ml-1">원</span>}
             </div>
           </div>
           
-          {/* 총 평가금액 (사용자별) */}
+          {/* 총 평가금액 (로그인 시에만 표시) */}
           <div className="bg-[#1a1a2e] rounded-xl p-4">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-gray-400 text-sm">{user ? '내 총 평가' : '총 평가금액'}</span>
+              <span className="text-gray-400 text-sm">내 총 평가</span>
               <Target className="w-4 h-4 text-gray-500" />
             </div>
             <div className="text-2xl font-bold text-cyan-400">
-              {(user && userTotalKRW > 0) ? userTotalKRW.toLocaleString() : totalValue.toLocaleString()}
-              <span className="text-sm text-gray-400 ml-1">원</span>
+              {user 
+                ? ((userTotalKRW > 0 ? userTotalKRW : totalValue) || 0).toLocaleString()
+                : <span className="text-gray-500 text-base">로그인 필요</span>}
+              {user && <span className="text-sm text-gray-400 ml-1">원</span>}
             </div>
           </div>
         </div>
