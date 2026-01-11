@@ -725,6 +725,141 @@ async def get_top_picks(n: int = 5):
     }
 
 
+@app.post("/api/debate/scan-and-buy")
+async def scan_and_buy(amount: int = 10000, top_n: int = 10):
+    """
+    AI 3대장이 상위 코인들을 스캔하고 토론 후 매수 추천 종목 자동 매수
+    1. 거래량 상위 코인 스캔
+    2. 각 코인에 대해 3개 AI 토론
+    3. 강력 매수/매수 추천 시 자동 매수
+    """
+    from upbit_client import upbit_client
+    
+    # 1. 거래량 상위 코인 가져오기
+    tickers = upbit_client.get_all_tickers()[:top_n]
+    
+    results = {
+        "scanned": [],
+        "debates": [],
+        "bought": [],
+        "skipped": []
+    }
+    
+    for ticker in tickers:
+        try:
+            # 2. AI 토론 실행
+            print(f"[DEBATE] {ticker} 토론 시작...")
+            debate_result = await ai_debate.run_debate(ticker)
+            
+            if not debate_result:
+                results["skipped"].append({"ticker": ticker, "reason": "토론 실패"})
+                continue
+            
+            debate_dict = ai_debate.to_dict(debate_result)
+            results["debates"].append(debate_dict)
+            results["scanned"].append(ticker)
+            
+            # 3. 매수 결정
+            if debate_result.consensus in ["buy", "strong_buy"] and debate_result.consensus_confidence >= 70:
+                # 자동 매수 실행
+                buy_result = upbit_client.buy_market_order(ticker, amount)
+                
+                if buy_result and "uuid" in buy_result:
+                    results["bought"].append({
+                        "ticker": ticker,
+                        "amount": amount,
+                        "verdict": debate_result.final_verdict,
+                        "confidence": debate_result.consensus_confidence,
+                        "uuid": buy_result["uuid"],
+                        "reasons": debate_result.key_reasons[:3]
+                    })
+                    print(f"[BUY] {ticker} 매수 완료! {debate_result.final_verdict}")
+                else:
+                    results["skipped"].append({
+                        "ticker": ticker, 
+                        "reason": "매수 실패",
+                        "verdict": debate_result.final_verdict
+                    })
+            else:
+                results["skipped"].append({
+                    "ticker": ticker,
+                    "reason": f"조건 미충족 ({debate_result.consensus}, {debate_result.consensus_confidence}%)",
+                    "verdict": debate_result.final_verdict
+                })
+                
+        except Exception as e:
+            print(f"[ERROR] {ticker} 처리 실패: {e}")
+            results["skipped"].append({"ticker": ticker, "reason": str(e)})
+    
+    return {
+        "success": True,
+        "summary": {
+            "total_scanned": len(results["scanned"]),
+            "total_bought": len(results["bought"]),
+            "total_skipped": len(results["skipped"])
+        },
+        **results
+    }
+
+
+@app.post("/api/debate/quick-pick")
+async def quick_pick_and_buy(amount: int = 10000):
+    """
+    빠른 AI 토론: 가장 유망한 1개 코인 선정 후 즉시 매수
+    """
+    from upbit_client import upbit_client
+    
+    # 거래량 상위 5개만 빠르게 스캔
+    tickers = upbit_client.get_all_tickers()[:5]
+    
+    best_pick = None
+    best_confidence = 0
+    all_debates = []
+    
+    for ticker in tickers:
+        try:
+            debate_result = await ai_debate.run_debate(ticker)
+            if not debate_result:
+                continue
+                
+            debate_dict = ai_debate.to_dict(debate_result)
+            all_debates.append(debate_dict)
+            
+            # 매수 추천이면서 신뢰도가 가장 높은 것 선택
+            if debate_result.consensus in ["buy", "strong_buy"]:
+                if debate_result.consensus_confidence > best_confidence:
+                    best_confidence = debate_result.consensus_confidence
+                    best_pick = debate_result
+                    
+        except Exception as e:
+            print(f"[ERROR] {ticker}: {e}")
+    
+    if best_pick and best_confidence >= 65:
+        # 최고 추천 종목 매수
+        buy_result = upbit_client.buy_market_order(best_pick.ticker, amount)
+        
+        return {
+            "success": True,
+            "action": "bought",
+            "pick": {
+                "ticker": best_pick.ticker,
+                "coin": best_pick.coin_name,
+                "verdict": best_pick.final_verdict,
+                "confidence": best_pick.consensus_confidence,
+                "reasons": best_pick.key_reasons,
+                "buy_result": buy_result
+            },
+            "all_debates": all_debates
+        }
+    else:
+        return {
+            "success": True,
+            "action": "no_buy",
+            "message": "매수 조건을 충족하는 코인이 없습니다",
+            "all_debates": all_debates
+        }
+
+
 # ========== WebSocket ==========
 
 @app.websocket("/ws")

@@ -40,23 +40,23 @@ class Expert:
     color: str   # 테마 색상
 
 
-# AI 3대장 캐릭터 정의
+# AI 3대장 캐릭터 정의 (Gemini 3, Claude Opus 4.5, GPT 5.2)
 EXPERTS = {
     "claude": Expert(
         id="claude",
-        name="Claude Lee",
-        name_kr="클로드 리",
+        name="Claude Opus",
+        name_kr="클로드 오퍼스",
         role="균형 분석가 (Balanced Analyst)",
         personality="침착하고 분석적이며 디테일에 강함. 실적 분석, 재무구조, 산업 구조를 깊이 파고드는 타입.",
         focus="기술적 지표, 온체인 데이터, 거래량 분석",
-        model="anthropic/claude-sonnet-4",
+        model="anthropic/claude-opus-4",
         avatar="/avatars/claude.png",
         color="#F97316"  # 오렌지
     ),
     "gemini": Expert(
         id="gemini",
-        name="Gemi Nine",
-        name_kr="제미 나인",
+        name="Gemini 3",
+        name_kr="제미니 쓰리",
         role="혁신·트렌드 전략가 (Future Trend Strategist)",
         personality="세련됨, 센스, 빠른 판단. 신성장 산업, 기술 분석의 1인자. 감각적 사고 + 데이터 스캔 능력.",
         focus="신기술 트렌드, 생태계 발전, 커뮤니티 성장",
@@ -66,8 +66,8 @@ EXPERTS = {
     ),
     "gpt": Expert(
         id="gpt",
-        name="G.P. Taylor",
-        name_kr="지피 테일러",
+        name="GPT 5.2",
+        name_kr="GPT 파이브",
         role="수석 리스크 총괄 (Chief Risk Officer)",
         personality="중후함, 느긋함, 깊은 통찰. 거시경제, 리스크 분석의 원로. 말투가 부드럽지만 권위 있음.",
         focus="거시경제, 규제 리스크, 시장 심리",

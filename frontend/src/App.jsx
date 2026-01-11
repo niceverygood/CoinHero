@@ -8,6 +8,7 @@ import {
 import { supabase, signInWithGoogle, signOut, getUserSettings, saveUserSettings } from './supabase';
 import AuthButton from './components/AuthButton';
 import SettingsModal from './components/SettingsModal';
+import AIDebatePanel from './components/AIDebatePanel';
 
 // 프로덕션: Railway 백엔드, 개발: 로컬 프록시
 const API_BASE = import.meta.env.PROD 
@@ -607,6 +608,17 @@ function App() {
 
       {/* ========== 메인 컨텐츠 ========== */}
       <div className="max-w-[1800px] mx-auto p-4">
+        
+        {/* AI 3대장 토론 패널 */}
+        <div className="mb-6">
+          <AIDebatePanel 
+            onBuyComplete={(pick) => {
+              console.log('AI 토론 매수 완료:', pick);
+              fetchBalances();
+              fetchTrades();
+            }}
+          />
+        </div>
         
         {/* AI 자동매매 컨트롤 패널 */}
         <div className="bg-gradient-to-r from-[#1a1a2e] to-[#16162a] rounded-2xl p-6 mb-6 border border-cyan-500/20">
