@@ -685,7 +685,7 @@ async def get_experts():
     }
 
 
-@app.post("/api/debate/coin/{ticker}")
+@app.post("/api/debate/{ticker}")
 async def run_debate(ticker: str):
     """특정 코인에 대한 AI 토론 실행"""
     result = await ai_debate.run_debate(ticker)
@@ -722,83 +722,6 @@ async def get_top_picks(n: int = 5):
     return {
         "count": len(picks),
         "picks": picks
-    }
-
-
-# ========== AI 토론 (매시간 자동 추천) ==========
-
-@app.get("/api/debate/status")
-async def get_debate_status():
-    """AI 토론 시스템 상태 조회"""
-    return ai_debate.get_status()
-
-
-@app.post("/api/debate/start-scheduler")
-async def start_debate_scheduler():
-    """매시간 AI 토론 스케줄러 시작"""
-    if ai_debate.is_running:
-        return {"status": "already_running", "message": "스케줄러가 이미 실행 중입니다"}
-    
-    # WebSocket 브로드캐스트 콜백 설정
-    ai_debate.set_broadcast_callback(manager.broadcast)
-    
-    # 스케줄러 시작 (백그라운드)
-    asyncio.create_task(ai_debate.start_hourly_scheduler())
-    
-    return {
-        "status": "started",
-        "message": "🕐 매시간 AI 토론 스케줄러가 시작되었습니다"
-    }
-
-
-@app.post("/api/debate/stop-scheduler")
-async def stop_debate_scheduler():
-    """매시간 AI 토론 스케줄러 중지"""
-    ai_debate.stop_scheduler()
-    return {
-        "status": "stopped",
-        "message": "🛑 AI 토론 스케줄러가 중지되었습니다"
-    }
-
-
-@app.post("/api/debate/run-now")
-async def run_debate_now():
-    """즉시 AI 토론 실행"""
-    if ai_debate.current_debate:
-        return {"status": "busy", "message": "토론이 이미 진행 중입니다"}
-    
-    # WebSocket 브로드캐스트 콜백 설정
-    ai_debate.set_broadcast_callback(manager.broadcast)
-    
-    # 즉시 토론 실행
-    result = await ai_debate.run_hourly_debate()
-    
-    return {
-        "status": "completed",
-        "result": result
-    }
-
-
-@app.get("/api/debate/latest")
-async def get_latest_recommendation():
-    """최신 AI 토론 추천 조회"""
-    latest = ai_debate.get_latest_recommendation()
-    if not latest:
-        return {"status": "no_data", "message": "아직 토론 결과가 없습니다"}
-    
-    return {
-        "status": "ok",
-        "recommendation": latest
-    }
-
-
-@app.get("/api/debate/recommendations")
-async def get_all_recommendations(limit: int = 10):
-    """모든 시간별 AI 추천 조회"""
-    recommendations = ai_debate.hourly_recommendations[-limit:]
-    return {
-        "count": len(recommendations),
-        "recommendations": recommendations
     }
 
 
@@ -970,8 +893,8 @@ async def get_ai_positions_detail():
         "min_holding_seconds": 300
     }
     
-    # 1. 먼저 AI 포지션 처리 (딕셔너리 복사본 사용하여 순회 중 변경 방지)
-    for ticker, pos in list(ai_positions.items()):
+    # 1. 먼저 AI 포지션 처리
+    for ticker, pos in ai_positions.items():
         processed_tickers.add(ticker)
         position_info = _get_position_detail(ticker, pos, sell_strategy_config, is_ai_managed=True)
         detailed_positions.append(position_info)

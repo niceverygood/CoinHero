@@ -8,8 +8,6 @@ import {
 import { supabase, signInWithGoogle, signOut, getUserSettings, saveUserSettings } from './supabase';
 import AuthButton from './components/AuthButton';
 import SettingsModal from './components/SettingsModal';
-import AIDebatePanel from './components/AIDebatePanel';
-import AIRecommendation from './components/AIRecommendation';
 
 // 프로덕션: Railway 백엔드, 개발: 로컬 프록시
 const API_BASE = import.meta.env.PROD 
@@ -78,9 +76,6 @@ function App() {
   // 포지션 모니터링
   const [positionDetails, setPositionDetails] = useState([]);
   const [sellStrategyConfig, setSellStrategyConfig] = useState(null);
-  
-  // 메뉴 탭 상태
-  const [activeTab, setActiveTab] = useState('recommend'); // 'recommend' | 'trading'
 
   // 인증 상태 감지
   useEffect(() => {
@@ -197,14 +192,12 @@ function App() {
     try {
       const res = await fetch(`${API_BASE}/api/balance`);
       const data = await res.json();
-      console.log('💰 잔고 API 응답:', data);
       const balanceList = data.balances || [];
       setBalances(balanceList);
       setTotalValue(data.total_krw || 0);
       
       // KRW 잔고 찾기
       const krw = balanceList.find(b => b.currency === 'KRW');
-      console.log('💵 KRW 잔고:', krw?.balance);
       setKrwBalance(krw?.balance || 0);
     } catch (e) {
       console.error('잔고 조회 실패:', e);
@@ -315,25 +308,6 @@ function App() {
     }
   };
 
-  // 즉시 스캔 - AI 분석 포함
-  const handleManualScan = async () => {
-    try {
-      console.log('🔍 즉시 스캔 시작...');
-      const res = await fetch(`${API_BASE}/api/scalping/scan`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      const data = await res.json();
-      console.log('📊 스캔 결과:', data);
-      // 스캔 후 상태 업데이트
-      await fetchAIStatus();
-      await fetchAILogs();
-      await fetchPositionDetails();
-    } catch (e) {
-      console.error('스캔 실패:', e);
-    }
-  };
-
   const toggleStrategy = (strategyId) => {
     setSelectedStrategies(prev => 
       prev.includes(strategyId) 
@@ -422,51 +396,18 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white">
-      
+
       {/* ========== 상단 헤더 ========== */}
       <header className="bg-[#12121a] border-b border-gray-800 px-4 py-3">
         <div className="max-w-[1800px] mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            {/* 로고 & 타이틀 */}
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center">
-                <Zap className="w-6 h-6 text-white" />
-              </div>
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
-                CoinHero
-              </h1>
-            </div>
-            
-            {/* 메뉴 탭 */}
-            <nav className="flex items-center gap-1 bg-[#1a1a2e] p-1 rounded-xl">
-              <button
-                onClick={() => setActiveTab('recommend')}
-                className={`px-4 py-2 rounded-lg font-medium text-sm transition-all ${
-                  activeTab === 'recommend'
-                    ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-lg'
-                    : 'text-gray-400 hover:text-white hover:bg-[#252538]'
-                }`}
-              >
-                <span className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4" />
-                  AI 코인추천
-                </span>
-              </button>
-              <button
-                onClick={() => setActiveTab('trading')}
-                className={`px-4 py-2 rounded-lg font-medium text-sm transition-all ${
-                  activeTab === 'trading'
-                    ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg'
-                    : 'text-gray-400 hover:text-white hover:bg-[#252538]'
-                }`}
-              >
-                <span className="flex items-center gap-2">
-                  <Brain className="w-4 h-4" />
-                  AI 자동거래
-                  {isRunning && <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />}
-                </span>
-              </button>
-            </nav>
+          <div className="flex items-center gap-3">
+            <Zap className="w-6 h-6 text-cyan-400" />
+            <h1 className="text-xl font-bold">AI 자동매매</h1>
+            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+              isRunning ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'
+            }`}>
+              {isRunning ? '● 실행중' : '○ 대기중'}
+                  </span>
           </div>
           
           <div className="flex items-center gap-4">
@@ -489,26 +430,16 @@ function App() {
               <span className="text-sm">새로고침</span>
             </button>
             
-            {/* 로그인/사용자 버튼 */}
-            <AuthButton 
-              user={user}
-              onLogin={handleLogin}
-              onLogout={handleLogout}
-              onSettings={() => setShowSettings(true)}
-            />
+            {/* 24시간 자동매매 - 연결 상태 표시 */}
+            <div className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-green-600/20 to-cyan-600/20 border border-green-500/30 rounded-lg">
+              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+              <span className="text-sm text-green-400 font-medium">24H 자동매매</span>
+            </div>
           </div>
         </div>
       </header>
       
-      {/* 설정 모달 */}
-      <SettingsModal
-        isOpen={showSettings}
-        onClose={() => setShowSettings(false)}
-        user={user}
-        settings={userSettings}
-        onSave={handleSaveSettings}
-        session={session}
-      />
+      {/* 설정 모달 (비활성화 - 24시간 자동매매 모드) */}
 
       {/* ========== 시장 지수 바 ========== */}
       <div className="bg-[#12121a] border-b border-gray-800 px-4 py-3">
@@ -537,33 +468,27 @@ function App() {
             </div>
           </div>
           
-          {/* 예수금 (로그인 시에만 표시) */}
+          {/* 예수금 */}
           <div className="bg-[#1a1a2e] rounded-xl p-4">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-gray-400 text-sm">내 예수금</span>
+              <span className="text-gray-400 text-sm">예수금</span>
               <DollarSign className="w-4 h-4 text-gray-500" />
             </div>
             <div className="text-2xl font-bold">
-              {user 
-                ? ((userBalances.length > 0 
-                    ? userBalances.find(b => b.currency === 'KRW')?.balance 
-                    : krwBalance) || 0).toLocaleString()
-                : <span className="text-gray-500 text-base">로그인 필요</span>}
-              {user && <span className="text-sm text-gray-400 ml-1">원</span>}
+              {krwBalance.toLocaleString()}
+              <span className="text-sm text-gray-400 ml-1">원</span>
             </div>
           </div>
           
-          {/* 총 평가금액 (로그인 시에만 표시) */}
+          {/* 총 평가금액 */}
           <div className="bg-[#1a1a2e] rounded-xl p-4">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-gray-400 text-sm">내 총 평가</span>
+              <span className="text-gray-400 text-sm">총 평가금액</span>
               <Target className="w-4 h-4 text-gray-500" />
             </div>
             <div className="text-2xl font-bold text-cyan-400">
-              {user 
-                ? ((userTotalKRW > 0 ? userTotalKRW : totalValue) || 0).toLocaleString()
-                : <span className="text-gray-500 text-base">로그인 필요</span>}
-              {user && <span className="text-sm text-gray-400 ml-1">원</span>}
+              {user ? userTotalKRW.toLocaleString() : totalValue.toLocaleString()}
+              <span className="text-sm text-gray-400 ml-1">원</span>
             </div>
           </div>
         </div>
@@ -683,14 +608,6 @@ function App() {
       {/* ========== 메인 컨텐츠 ========== */}
       <div className="max-w-[1800px] mx-auto p-4">
         
-        {/* AI 코인추천 탭 */}
-        {activeTab === 'recommend' && (
-          <AIRecommendation />
-        )}
-        
-        {/* AI 자동거래 탭 */}
-        {activeTab === 'trading' && (
-          <>
         {/* AI 자동매매 컨트롤 패널 */}
         <div className="bg-gradient-to-r from-[#1a1a2e] to-[#16162a] rounded-2xl p-6 mb-6 border border-cyan-500/20">
           <div className="flex items-start justify-between mb-6">
@@ -727,7 +644,7 @@ function App() {
             {/* 우측: 액션 버튼들 */}
             <div className="flex items-center gap-3">
               <button 
-                onClick={handleManualScan}
+                onClick={() => { fetchAIStatus(); fetchMarketPrices(); }}
                 className="px-4 py-3 bg-[#252538] hover:bg-[#2d2d45] rounded-xl flex items-center gap-2 transition-colors"
               >
                 <Search className="w-4 h-4" />
@@ -900,11 +817,6 @@ function App() {
           </div>
         </div>
 
-        {/* ========== 🎭 AI 3대장 토론 ========== */}
-        <div className="mb-4">
-          <AIDebatePanel />
-        </div>
-
         {/* ========== 📊 포지션 모니터링 (이동됨) ========== */}
         <div className="bg-[#12121a] rounded-2xl p-6 border border-gray-800 mb-4">
           <div className="flex items-center justify-between mb-6">
@@ -916,26 +828,26 @@ function App() {
                 <h3 className="text-xl font-bold">포지션 모니터링</h3>
                 <p className="text-xs text-gray-500">Position Monitor & Sell Strategy</p>
               </div>
-            </div>
-            <div className="flex items-center gap-2">
+              </div>
+              <div className="flex items-center gap-2">
               <span className="px-3 py-1 bg-purple-500/10 rounded-full text-xs font-bold text-purple-400">
                 {positionDetails.length}개 포지션
-              </span>
+                  </span>
               <span className="px-2 py-1 bg-cyan-500/10 rounded-full text-[10px] text-cyan-400">
                 AI {positionDetails.filter(p => p.is_ai_managed).length}
-              </span>
+                      </span>
               <span className="px-2 py-1 bg-gray-500/10 rounded-full text-[10px] text-gray-400">
                 수동 {positionDetails.filter(p => !p.is_ai_managed).length}
-              </span>
+                </span>
               <button 
                 onClick={fetchPositionDetails}
                 className="p-2 hover:bg-gray-800 rounded-lg transition-colors"
               >
                 <RefreshCw className="w-4 h-4 text-gray-500" />
               </button>
+              </div>
             </div>
-          </div>
-
+            
           {/* 매도 전략 설정 */}
           {sellStrategyConfig && (
             <div className="mb-6 p-4 bg-[#1a1a2e] rounded-xl border border-gray-800">
@@ -965,8 +877,8 @@ function App() {
                   <p className="font-mono text-gray-300">{sellStrategyConfig.min_holding_seconds / 60}분</p>
                 </div>
               </div>
-            </div>
-          )}
+              </div>
+            )}
 
           {/* 포지션 카드 그리드 */}
           {positionDetails.length > 0 ? (
@@ -1069,24 +981,24 @@ function App() {
                 </div>
               ) : (
                 aiActivities.map((activity, idx) => (
-                  <div key={idx} className="flex items-start gap-3 p-3 bg-[#1a1a2e] rounded-lg">
+                    <div key={idx} className="flex items-start gap-3 p-3 bg-[#1a1a2e] rounded-lg">
                     <div className={`mt-1 w-2 h-2 rounded-full ${
                       activity.type === '매수' ? 'bg-green-400' : 'bg-red-400'
-                    }`} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      }`} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
                         <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
                           activity.type === '매수' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
                         }`}>
                           {activity.type}
-                        </span>
-                        <span className="text-xs text-gray-500">
+                          </span>
+                          <span className="text-xs text-gray-500">
                           {activity.time.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
+                          </span>
+                        </div>
                       <p className="text-sm text-gray-300 mt-1 truncate">{activity.message}</p>
+                      </div>
                     </div>
-                  </div>
                 ))
               )}
             </div>
@@ -1110,13 +1022,13 @@ function App() {
             ) : (
               <div className="space-y-2 max-h-[300px] overflow-y-auto">
                 {signals.map((signal, idx) => (
-                  <div key={idx} className="p-3 bg-[#1a1a2e] rounded-lg border border-yellow-500/20">
+                    <div key={idx} className="p-3 bg-[#1a1a2e] rounded-lg border border-yellow-500/20">
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-yellow-400">{signal.coin_name}</span>
+                          <span className="font-bold text-yellow-400">{signal.coin_name}</span>
                       <span className="text-xs text-gray-400">{signal.strategy}</span>
-                    </div>
+                        </div>
                     <p className="text-sm text-gray-400 mt-1">{signal.reason}</p>
-                  </div>
+                        </div>
                 ))}
               </div>
             )}
@@ -1150,10 +1062,10 @@ function App() {
                           <span className="text-xs font-bold text-purple-400">{coin.currency?.slice(0, 2)}</span>
                         </div>
                         <div>
-                          <span className="font-medium text-sm">{coin.currency}</span>
-                          {coin.ai_managed && (
+                            <span className="font-medium text-sm">{coin.currency}</span>
+                            {coin.ai_managed && (
                             <span className="ml-1 text-[10px] bg-cyan-500/20 text-cyan-400 px-1 rounded">AI</span>
-                          )}
+                            )}
                           <p className="text-xs text-gray-500">{coin.balance?.toFixed(4)}개</p>
                         </div>
                       </div>
@@ -1172,8 +1084,6 @@ function App() {
             )}
           </div>
         </div>
-          </>
-        )}
       </div>
 
       {/* ========== 푸터 ========== */}

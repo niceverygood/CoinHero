@@ -40,7 +40,7 @@ class Expert:
     color: str   # 테마 색상
 
 
-# AI 3대장 캐릭터 정의 (OpenRouter 최신 모델)
+# AI 3대장 캐릭터 정의
 EXPERTS = {
     "claude": Expert(
         id="claude",
@@ -49,7 +49,7 @@ EXPERTS = {
         role="균형 분석가 (Balanced Analyst)",
         personality="침착하고 분석적이며 디테일에 강함. 실적 분석, 재무구조, 산업 구조를 깊이 파고드는 타입.",
         focus="기술적 지표, 온체인 데이터, 거래량 분석",
-        model="anthropic/claude-3.5-sonnet",  # Claude Opus 4.5
+        model="anthropic/claude-sonnet-4",
         avatar="/avatars/claude.png",
         color="#F97316"  # 오렌지
     ),
@@ -60,7 +60,7 @@ EXPERTS = {
         role="혁신·트렌드 전략가 (Future Trend Strategist)",
         personality="세련됨, 센스, 빠른 판단. 신성장 산업, 기술 분석의 1인자. 감각적 사고 + 데이터 스캔 능력.",
         focus="신기술 트렌드, 생태계 발전, 커뮤니티 성장",
-        model="google/gemini-2.0-flash-001",  # Gemini 3
+        model="google/gemini-2.5-pro-preview",
         avatar="/avatars/gemini.png",
         color="#10B981"  # 민트/그린
     ),
@@ -71,7 +71,7 @@ EXPERTS = {
         role="수석 리스크 총괄 (Chief Risk Officer)",
         personality="중후함, 느긋함, 깊은 통찰. 거시경제, 리스크 분석의 원로. 말투가 부드럽지만 권위 있음.",
         focus="거시경제, 규제 리스크, 시장 심리",
-        model="openai/gpt-4o",  # GPT 5.2
+        model="openai/gpt-4.1",
         avatar="/avatars/gpt.png",
         color="#3B82F6"  # 블루
     )
@@ -114,28 +114,13 @@ class DebateResult:
 
 
 class AIDebate:
-    """AI 3대장 토론 시스템 - 매시간 자동 추천"""
+    """AI 3대장 토론 시스템"""
     
     def __init__(self):
         self.client = upbit_client
         self.api_key = OPENROUTER_API_KEY
         self.debate_history: List[DebateResult] = []
         self.message_counter = 0
-        self.is_running = False
-        self.current_debate: Optional[Dict] = None
-        self.hourly_recommendations: List[Dict] = []  # 매시간 추천 기록
-        self._scheduler_task = None
-        self._broadcast_callback = None  # WebSocket 브로드캐스트 콜백
-        self.last_debate_time: Optional[str] = None
-        
-    def set_broadcast_callback(self, callback):
-        """WebSocket 브로드캐스트 콜백 설정"""
-        self._broadcast_callback = callback
-        
-    async def broadcast(self, data: Dict):
-        """실시간 브로드캐스트"""
-        if self._broadcast_callback:
-            await self._broadcast_callback(json.dumps(data))
         
     async def call_ai(self, model: str, prompt: str, system_prompt: str) -> str:
         """OpenRouter API 호출"""
@@ -461,307 +446,6 @@ class AIDebate:
             "timestamp": result.timestamp,
             "experts": {k: asdict(v) for k, v in EXPERTS.items()}
         }
-
-
-    async def get_top_candidates(self, n: int = 30) -> List[str]:
-        """업비트 상장 코인 중 거래량 상위 코인 선정
-        
-        Args:
-            n: 분석할 코인 수 (기본값: 30개, 최대: 전체 상장 코인)
-        """
-        try:
-            import pyupbit
-            
-            # 모든 KRW 마켓 코인 가져오기
-            all_tickers = pyupbit.get_tickers(fiat="KRW")
-            if not all_tickers:
-                return ["KRW-BTC", "KRW-ETH", "KRW-XRP"]
-            
-            print(f"[토론] 업비트 전체 상장 코인: {len(all_tickers)}개")
-            
-            # 거래대금 기준으로 정렬하기 위해 현재가 정보 가져오기
-            try:
-                ticker_info = pyupbit.get_current_price(all_tickers)
-                if ticker_info and isinstance(ticker_info, dict):
-                    # 가격이 있는 코인만 필터링
-                    valid_tickers = [t for t in all_tickers if ticker_info.get(t)]
-                    print(f"[토론] 유효한 코인: {len(valid_tickers)}개")
-                else:
-                    valid_tickers = all_tickers
-            except:
-                valid_tickers = all_tickers
-            
-            # n개 선택 (BTC, ETH는 항상 포함)
-            result = []
-            if "KRW-BTC" in valid_tickers:
-                result.append("KRW-BTC")
-                valid_tickers.remove("KRW-BTC")
-            if "KRW-ETH" in valid_tickers:
-                result.append("KRW-ETH")
-                valid_tickers.remove("KRW-ETH")
-            
-            # 나머지 코인 추가
-            remaining = n - len(result)
-            result.extend(valid_tickers[:remaining])
-            
-            print(f"[토론] 분석 대상: {len(result)}개 코인")
-            return result[:n]
-            
-        except Exception as e:
-            print(f"[토론] 후보 선정 실패: {e}")
-            return ["KRW-BTC", "KRW-ETH", "KRW-XRP", "KRW-SOL", "KRW-DOGE"]
-    
-    async def run_hourly_debate(self) -> Dict:
-        """매시간 AI 토론 실행"""
-        print(f"\n{'='*60}")
-        print(f"[{datetime.now()}] 🎭 AI 3대장 토론 시작!")
-        print(f"{'='*60}")
-        
-        self.current_debate = {
-            "status": "analyzing",
-            "started_at": datetime.now().isoformat(),
-            "messages": [],
-            "candidates": [],
-            "final_pick": None
-        }
-        
-        # 실시간 상태 브로드캐스트
-        await self.broadcast({
-            "type": "debate_start",
-            "data": {
-                "status": "started",
-                "message": "🎭 AI 3대장 토론이 시작되었습니다!",
-                "timestamp": datetime.now().isoformat()
-            }
-        })
-        
-        # 1. 후보 코인 선정 (거래량 상위 30개 코인 분석)
-        candidates = await self.get_top_candidates(30)
-        self.current_debate["candidates"] = candidates
-        
-        await self.broadcast({
-            "type": "debate_candidates",
-            "data": {
-                "candidates": candidates,
-                "message": f"📋 {len(candidates)}개 코인 후보 선정 완료"
-            }
-        })
-        
-        # 2. 각 코인에 대해 토론
-        all_results = []
-        for i, ticker in enumerate(candidates):
-            coin_name = ticker.replace("KRW-", "")
-            
-            await self.broadcast({
-                "type": "debate_progress",
-                "data": {
-                    "current_coin": coin_name,
-                    "progress": i + 1,
-                    "total": len(candidates),
-                    "message": f"🔍 {coin_name} 분석 중..."
-                }
-            })
-            
-            result = await self.run_debate_with_broadcast(ticker)
-            if result:
-                all_results.append(result)
-            
-            await asyncio.sleep(2)  # API 속도 제한
-        
-        # 3. 최종 추천 선정
-        final_pick = None
-        if all_results:
-            # 매수 추천 중 가장 높은 신뢰도
-            buy_results = [r for r in all_results if r.consensus in ["buy", "strong_buy"]]
-            if buy_results:
-                buy_results.sort(key=lambda x: x.consensus_confidence, reverse=True)
-                final_pick = buy_results[0]
-        
-        # 4. 결과 저장
-        recommendation = {
-            "timestamp": datetime.now().isoformat(),
-            "candidates": candidates,
-            "results": [self.to_dict(r) for r in all_results],
-            "final_pick": self.to_dict(final_pick) if final_pick else None,
-            "summary": {
-                "total_analyzed": len(all_results),
-                "buy_recommendations": len([r for r in all_results if r.consensus in ["buy", "strong_buy"]]),
-                "hold_recommendations": len([r for r in all_results if r.consensus == "hold"]),
-                "sell_recommendations": len([r for r in all_results if r.consensus in ["sell", "strong_sell"]])
-            }
-        }
-        
-        self.hourly_recommendations.append(recommendation)
-        if len(self.hourly_recommendations) > 24:  # 최근 24시간만 유지
-            self.hourly_recommendations = self.hourly_recommendations[-24:]
-        
-        self.last_debate_time = datetime.now().isoformat()
-        self.current_debate = None
-        
-        # 최종 결과 브로드캐스트
-        await self.broadcast({
-            "type": "debate_complete",
-            "data": {
-                "recommendation": recommendation,
-                "message": f"✅ AI 토론 완료! 추천: {final_pick.coin_name if final_pick else '없음'}"
-            }
-        })
-        
-        print(f"\n[{datetime.now()}] ✅ 토론 완료!")
-        if final_pick:
-            print(f"   🏆 최종 추천: {final_pick.coin_name} - {final_pick.final_verdict}")
-        print(f"{'='*60}\n")
-        
-        return recommendation
-    
-    async def run_debate_with_broadcast(self, ticker: str) -> Optional[DebateResult]:
-        """실시간 브로드캐스트와 함께 토론 실행"""
-        coin_name = ticker.replace("KRW-", "")
-        print(f"\n[{datetime.now()}] 🎭 {coin_name} 토론 시작")
-        
-        # 시장 데이터 수집
-        market_data = self.get_market_data(ticker)
-        if not market_data:
-            print(f"   ❌ 시장 데이터 수집 실패")
-            return None
-        
-        messages = []
-        expert_order = ["claude", "gemini", "gpt"]
-        
-        for expert_id in expert_order:
-            expert = EXPERTS[expert_id]
-            
-            # 분석 시작 브로드캐스트
-            await self.broadcast({
-                "type": "expert_thinking",
-                "data": {
-                    "coin": coin_name,
-                    "expert_id": expert_id,
-                    "expert_name": expert.name_kr,
-                    "status": "thinking",
-                    "message": f"💭 {expert.name_kr} 분석 중..."
-                }
-            })
-            
-            print(f"   → {expert.name_kr} 분석 중...")
-            message = await self.get_expert_opinion(
-                expert, ticker, market_data,
-                messages if messages else None
-            )
-            messages.append(message)
-            
-            # 의견 브로드캐스트
-            await self.broadcast({
-                "type": "expert_opinion",
-                "data": {
-                    "coin": coin_name,
-                    "expert_id": expert_id,
-                    "expert_name": expert.name_kr,
-                    "opinion": message.opinion,
-                    "confidence": message.confidence,
-                    "content": message.content,
-                    "key_points": message.key_points,
-                    "color": expert.color
-                }
-            })
-            
-            print(f"      의견: {message.opinion} (신뢰도 {message.confidence}%)")
-            await asyncio.sleep(1)
-        
-        # 합의 도출
-        consensus, confidence, verdict, key_reasons = self.calculate_consensus(messages)
-        
-        result = DebateResult(
-            ticker=ticker,
-            coin_name=coin_name,
-            messages=messages,
-            consensus=consensus,
-            consensus_confidence=confidence,
-            final_verdict=verdict,
-            price_target=None,
-            key_reasons=key_reasons,
-            timestamp=datetime.now().isoformat()
-        )
-        
-        self.debate_history.append(result)
-        
-        # 합의 결과 브로드캐스트
-        await self.broadcast({
-            "type": "debate_consensus",
-            "data": {
-                "coin": coin_name,
-                "consensus": consensus,
-                "confidence": confidence,
-                "verdict": verdict,
-                "key_reasons": key_reasons
-            }
-        })
-        
-        print(f"   ✅ 합의: {verdict} (신뢰도 {confidence}%)")
-        return result
-    
-    async def start_hourly_scheduler(self):
-        """매시간 자동 토론 스케줄러 시작"""
-        if self.is_running:
-            return
-        
-        self.is_running = True
-        print(f"[{datetime.now()}] 🕐 매시간 AI 토론 스케줄러 시작")
-        
-        while self.is_running:
-            try:
-                # 다음 정시까지 대기
-                now = datetime.now()
-                next_hour = now.replace(minute=0, second=0, microsecond=0)
-                if now.minute > 0 or now.second > 0:
-                    next_hour = next_hour.replace(hour=now.hour + 1)
-                
-                wait_seconds = (next_hour - now).total_seconds()
-                
-                # 처음 시작 시 즉시 실행 (5분 내면 바로 실행)
-                if wait_seconds > 300:  # 5분 이상 남았으면 대기
-                    print(f"[{datetime.now()}] 다음 토론: {next_hour.strftime('%H:%M')} ({int(wait_seconds/60)}분 후)")
-                    await asyncio.sleep(wait_seconds)
-                
-                if not self.is_running:
-                    break
-                
-                # 토론 실행
-                await self.run_hourly_debate()
-                
-                # 1시간 대기 (다음 정시)
-                await asyncio.sleep(3600)
-                
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                print(f"[토론 스케줄러 오류] {e}")
-                await asyncio.sleep(60)  # 오류 시 1분 후 재시도
-        
-        print(f"[{datetime.now()}] 🛑 AI 토론 스케줄러 종료")
-    
-    def stop_scheduler(self):
-        """스케줄러 중지"""
-        self.is_running = False
-        if self._scheduler_task:
-            self._scheduler_task.cancel()
-    
-    def get_status(self) -> Dict:
-        """현재 상태 조회"""
-        return {
-            "is_running": self.is_running,
-            "last_debate_time": self.last_debate_time,
-            "current_debate": self.current_debate,
-            "total_debates": len(self.debate_history),
-            "hourly_recommendations_count": len(self.hourly_recommendations),
-            "experts": {k: asdict(v) for k, v in EXPERTS.items()}
-        }
-    
-    def get_latest_recommendation(self) -> Optional[Dict]:
-        """최신 추천 조회"""
-        if self.hourly_recommendations:
-            return self.hourly_recommendations[-1]
-        return None
 
 
 # 싱글톤 인스턴스

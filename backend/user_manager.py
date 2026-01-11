@@ -169,17 +169,15 @@ class UserManager:
             if now - self._client_timestamps.get(user_id, 0) < self._cache_ttl:
                 return self._user_clients[user_id]
         
-        # Supabase에서 사용자 설정 조회
+        # 설정 조회
         settings = self.get_user_settings(user_id)
         if not settings:
-            print(f"[UserManager] 사용자 {user_id}의 설정을 찾을 수 없습니다")
             return None
         
         access_key = settings.get("upbit_access_key")
         secret_key = settings.get("upbit_secret_key")
         
         if not access_key or not secret_key:
-            print(f"[UserManager] 사용자 {user_id}의 API 키가 설정되지 않았습니다")
             return None
         
         try:
@@ -189,7 +187,6 @@ class UserManager:
             self._user_clients[user_id] = client
             self._client_timestamps[user_id] = now
             
-            print(f"[UserManager] 사용자 {user_id}의 업비트 클라이언트 생성 성공")
             return client
         except Exception as e:
             print(f"[UserManager] 업비트 클라이언트 생성 실패: {e}")
