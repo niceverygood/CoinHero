@@ -353,6 +353,108 @@ class Database:
             "custom": round(custom_profit, 2)
         }
 
+    # ========== AI 토론 ==========
+    
+    def save_debate(self, debate: Dict[str, Any]) -> Optional[str]:
+        """AI 토론 결과 저장"""
+        # 메모리에 저장
+        debate_id = debate.get("id", f"debate_{int(time.time())}")
+        memory_debate = {
+            "id": debate_id,
+            "ticker": debate.get("ticker", ""),
+            "coin_name": debate.get("coin_name", ""),
+            "consensus": debate.get("consensus", ""),
+            "consensus_confidence": debate.get("consensus_confidence", 0),
+            "final_verdict": debate.get("final_verdict", ""),
+            "key_reasons": debate.get("key_reasons", []),
+            "executed": debate.get("executed", False),
+            "executed_amount": debate.get("executed_amount"),
+            "created_at": datetime.now().isoformat()
+        }
+        
+        if not hasattr(self, 'memory_debates'):
+            self.memory_debates = []
+        self.memory_debates.append(memory_debate)
+        
+        if not self.client:
+            return debate_id
+        
+        try:
+            # 토론 결과 저장
+            data = {
+                "ticker": debate.get("ticker", ""),
+                "coin_name": debate.get("coin_name", ""),
+                "consensus": debate.get("consensus", ""),
+                "consensus_confidence": debate.get("consensus_confidence", 0),
+                "final_verdict": debate.get("final_verdict", ""),
+                "price_target": float(debate.get("price_target")) if debate.get("price_target") else None,
+                "key_reasons": debate.get("key_reasons", []),
+                "executed": debate.get("executed", False),
+                "executed_amount": float(debate.get("executed_amount")) if debate.get("executed_amount") else None,
+            }
+            
+            result = self.client.table("ai_debates").insert(data).execute()
+            
+            if result.data:
+                db_debate_id = result.data[0].get("id")
+                
+                # 토론 메시지 (전문가 의견) 저장
+                messages = debate.get("messages", [])
+                for msg in messages:
+                    msg_data = {
+                        "debate_id": db_debate_id,
+                        "expert_id": msg.get("expert_id", ""),
+                        "expert_name": msg.get("expert_name", ""),
+                        "opinion": msg.get("opinion", ""),
+                        "confidence": msg.get("confidence", 0),
+                        "content": msg.get("content", ""),
+                        "key_points": msg.get("key_points", []),
+                    }
+                    self.client.table("ai_debate_messages").insert(msg_data).execute()
+                
+                print(f"[DB] AI 토론 저장 완료: {debate.get('ticker')} - {debate.get('final_verdict')}")
+                return db_debate_id
+        except Exception as e:
+            print(f"[DB] AI 토론 저장 실패: {e}")
+            return debate_id
+        
+        return debate_id
+    
+    def get_debates(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """AI 토론 기록 조회"""
+        if self.client:
+            try:
+                result = self.client.table("ai_debates") \
+                    .select("*, ai_debate_messages(*)") \
+                    .order("created_at", desc=True) \
+                    .limit(limit) \
+                    .execute()
+                if result.data:
+                    return result.data
+            except Exception as e:
+                print(f"[DB] AI 토론 조회 실패: {e}")
+        
+        # 메모리 반환
+        if hasattr(self, 'memory_debates'):
+            return sorted(self.memory_debates, key=lambda x: x.get("created_at", ""), reverse=True)[:limit]
+        return []
+    
+    def update_debate_execution(self, debate_id: str, executed: bool, amount: float = None) -> bool:
+        """토론 실행 상태 업데이트"""
+        if not self.client:
+            return False
+        
+        try:
+            data = {"executed": executed}
+            if amount:
+                data["executed_amount"] = amount
+            
+            self.client.table("ai_debates").update(data).eq("id", debate_id).execute()
+            return True
+        except Exception as e:
+            print(f"[DB] 토론 실행 상태 업데이트 실패: {e}")
+            return False
+
 
 # 싱글톤 인스턴스
 db = Database()

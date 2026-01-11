@@ -123,11 +123,13 @@ class AIDebate:
         self.message_counter = 0
         
     async def call_ai(self, model: str, prompt: str, system_prompt: str) -> str:
-        """OpenRouter API 호출"""
+        """OpenRouter API 호출 (requests 사용)"""
+        import requests
+        
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "http://localhost:8081",
+            "HTTP-Referer": "http://localhost:8080",
             "X-Title": "CoinHero AI Debate"
         }
         
@@ -142,25 +144,20 @@ class AIDebate:
         }
         
         try:
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
+            response = requests.post(
+                OPENROUTER_BASE_URL,
+                headers=headers,
+                json=payload,
+                timeout=90
+            )
             
-            connector = aiohttp.TCPConnector(ssl=ssl_context)
-            async with aiohttp.ClientSession(connector=connector) as session:
-                async with session.post(
-                    OPENROUTER_BASE_URL,
-                    headers=headers,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=90)
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        return data["choices"][0]["message"]["content"]
-                    else:
-                        error = await response.text()
-                        print(f"AI API 오류 ({model}): {response.status} - {error}")
-                        return None
+            if response.status_code == 200:
+                data = response.json()
+                return data["choices"][0]["message"]["content"]
+            else:
+                error = response.text
+                print(f"AI API 오류 ({model}): {response.status_code} - {error}")
+                return None
         except Exception as e:
             print(f"AI 호출 실패 ({model}): {e}")
             return None
@@ -393,9 +390,46 @@ class AIDebate:
         )
         
         self.debate_history.append(result)
+        
+        # DB에 저장
+        self._save_debate_to_db(result)
+        
         print(f"[{datetime.now()}] 토론 완료: {verdict} (신뢰도 {confidence}%)")
         
         return result
+    
+    def _save_debate_to_db(self, result: DebateResult):
+        """토론 결과를 DB에 저장"""
+        try:
+            from database import db
+            
+            # 메시지 변환
+            messages_data = []
+            for msg in result.messages:
+                messages_data.append({
+                    "expert_id": msg.expert_id,
+                    "expert_name": msg.expert_name,
+                    "opinion": msg.opinion,
+                    "confidence": msg.confidence,
+                    "content": msg.content,
+                    "key_points": msg.key_points
+                })
+            
+            debate_data = {
+                "ticker": result.ticker,
+                "coin_name": result.coin_name,
+                "consensus": result.consensus,
+                "consensus_confidence": result.consensus_confidence,
+                "final_verdict": result.final_verdict,
+                "price_target": result.price_target,
+                "key_reasons": result.key_reasons,
+                "messages": messages_data,
+                "executed": False
+            }
+            
+            db.save_debate(debate_data)
+        except Exception as e:
+            print(f"[AI Debate] DB 저장 실패: {e}")
     
     async def run_multi_debate(self, tickers: List[str]) -> List[DebateResult]:
         """여러 코인 토론"""

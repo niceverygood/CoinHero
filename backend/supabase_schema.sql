@@ -63,6 +63,45 @@ CREATE POLICY "Service role full access" ON trades FOR ALL USING (true);
 CREATE POLICY "Service role full access" ON positions FOR ALL USING (true);
 CREATE POLICY "Service role full access" ON daily_stats FOR ALL USING (true);
 
+-- 4. AI 토론 결과 테이블
+CREATE TABLE IF NOT EXISTS ai_debates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ticker VARCHAR(20) NOT NULL,
+    coin_name VARCHAR(50),
+    consensus TEXT,
+    consensus_confidence INTEGER,
+    final_verdict VARCHAR(20),
+    price_target DECIMAL(20,2),
+    key_reasons JSONB,
+    executed BOOLEAN DEFAULT FALSE,
+    executed_amount DECIMAL(20,2),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 5. AI 토론 메시지 테이블 (개별 전문가 의견)
+CREATE TABLE IF NOT EXISTS ai_debate_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    debate_id UUID REFERENCES ai_debates(id) ON DELETE CASCADE,
+    expert_id VARCHAR(20) NOT NULL,
+    expert_name VARCHAR(50),
+    opinion VARCHAR(20),
+    confidence INTEGER,
+    content TEXT,
+    key_points JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 인덱스 추가
+CREATE INDEX IF NOT EXISTS idx_debates_created_at ON ai_debates(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_debates_ticker ON ai_debates(ticker);
+CREATE INDEX IF NOT EXISTS idx_debate_messages_debate_id ON ai_debate_messages(debate_id);
+
+-- RLS 정책
+ALTER TABLE ai_debates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ai_debate_messages ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Service role full access" ON ai_debates FOR ALL USING (true);
+CREATE POLICY "Service role full access" ON ai_debate_messages FOR ALL USING (true);
+
 
 
 

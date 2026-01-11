@@ -19,6 +19,7 @@ from config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL
 from upbit_client import upbit_client
 from scalping_strategies import STRATEGIES, StrategyType
 from database import db
+from strategies import ProfitMaximizer
 
 
 # AI 모델 설정
@@ -931,62 +932,33 @@ RSI(상대강도지수) 기반 평균회귀 전략으로 매매합니다.
                             
                             strategy_reason = f"🏆래리종합 {conditions_met}조건"
                     
-                    # ========== 수익률 최대화 전략 (개선: 상승 추세에서만 매수) ==========
+                    # ========== 수익률 최대화 전략 (ProfitMaximizer 사용) ==========
                     elif strategy == "max_profit":
-                        # ===== 핵심 변경: 상승 추세 확인 =====
-                        
-                        # 1. 가격이 20일 이동평균 위에 있어야 함 (상승 추세 확인)
-                        cond1_above_ma = current_price > ma20
-                        
-                        # 2. RSI 45-65 (적정 구간, 과매수/과매도 아님) + 상승 중
-                        cond2_rsi = 45 <= rsi <= 65 and rsi > prev_rsi
-                        
-                        # 3. 볼린저 밴드 중간~상단 (30-80%) - 상승 추세
-                        cond3_bb = 30 <= bb_percent <= 80
-                        
-                        # 4. 거래량 1.5배 이상 (강한 매수세)
-                        cond4_volume = volume_ratio >= 1.5
-                        
-                        # 5. 당일 상승 중 (0.3% 이상)
-                        cond5_price = price_change > 0.3
-                        
-                        # 6. 5일 연속 상승 추세 (고점 갱신)
-                        cond6_uptrend = (float(df['close'].iloc[-1]) > float(df['close'].iloc[-2]) and
-                                        float(df['close'].iloc[-2]) > float(df['close'].iloc[-3]))
-                        
-                        # 7. MACD 골든크로스 또는 양수 유지
-                        exp12 = df['close'].ewm(span=12, adjust=False).mean()
-                        exp26 = df['close'].ewm(span=26, adjust=False).mean()
-                        macd = exp12 - exp26
-                        signal = macd.ewm(span=9, adjust=False).mean()
-                        macd_hist = macd - signal
-                        cond7_macd = float(macd_hist.iloc[-1]) > 0 and float(macd_hist.iloc[-1]) > float(macd_hist.iloc[-2])
-                        
-                        # 8. 최근 5일 내 신고가 근처 (상위 20%)
-                        high_5d = df['high'].tail(5).max()
-                        cond8_near_high = current_price >= float(high_5d) * 0.98
-                        
-                        conditions_met = sum([cond1_above_ma, cond2_rsi, cond3_bb, cond4_volume, 
-                                            cond5_price, cond6_uptrend, cond7_macd, cond8_near_high])
-                        
-                        # ===== 핵심: 상승 추세 필수 + 최소 5개 조건 충족 =====
-                        if cond1_above_ma and cond6_uptrend and conditions_met >= 5:
-                            strategy_score = 80 + conditions_met * 5
-                            if cond7_macd:
-                                strategy_score += 10  # MACD 골든크로스 가산
-                            if cond8_near_high:
-                                strategy_score += 10  # 신고가 근처 가산
-                            if cond4_volume:
-                                strategy_score += min(10, (volume_ratio - 1.5) * 5)
+                        try:
+                            # ProfitMaximizer 전략 사용
+                            profit_maximizer = ProfitMaximizer(ticker)
+                            should_buy, buy_reason = profit_maximizer.should_buy()
                             
-                            indicators = []
-                            indicators.append(f"MA20↑")  # 이평선 위
-                            if cond2_rsi: indicators.append(f"RSI{rsi:.0f}")
-                            if cond4_volume: indicators.append(f"Vol{volume_ratio:.1f}x")
-                            if cond7_macd: indicators.append("MACD↑")
-                            if cond8_near_high: indicators.append("신고가")
-                            
-                            strategy_reason = f"💎상승추세 {conditions_met}조건({','.join(indicators[:4])})"
+                            if should_buy:
+                                # 분석 결과 가져오기
+                                analysis_summary = profit_maximizer.get_analysis_summary()
+                                if analysis_summary:
+                                    strategy_score = analysis_summary['buy_score'] + 30  # 기본 점수 + 30
+                                    
+                                    indicators = []
+                                    ind = analysis_summary['indicators']
+                                    indicators.append(f"RSI{ind['RSI']:.0f}")
+                                    indicators.append(f"BB{ind['BB위치']:.0f}%")
+                                    indicators.append(f"Vol{ind['거래량배율']:.1f}x")
+                                    if ind['MACD히스토'] > 0:
+                                        indicators.append("MACD↑")
+                                    
+                                    strategy_reason = f"💎수익률최대화 [점수:{analysis_summary['buy_score']}] ({','.join(indicators[:4])})"
+                                else:
+                                    strategy_score = 85
+                                    strategy_reason = f"💎수익률최대화 매수신호"
+                        except Exception as e:
+                            print(f"[ProfitMaximizer] {ticker} 분석 오류: {e}")
                     
                     # 점수가 있으면 추가
                     if strategy_score > 0:
@@ -1556,16 +1528,31 @@ RSI(14): {data['rsi']:.1f}
             # 종합 전략 5% 이상 수익
             return profit_rate >= 5.0 and rsi > 70
         
-        # ========== 수익률 최대화 전략 (5% 이상에서 AI 분석) ==========
+        # ========== 수익률 최대화 전략 (ProfitMaximizer 사용) ==========
         elif strategy == "max_profit":
-            # RSI 75 이상 + 5% 이상 수익 → AI 분석 후 익절
+            try:
+                # 보유 포지션에서 ticker 가져오기 (context에서)
+                for ticker, pos in self.positions.items():
+                    if pos.get('strategy') == 'max_profit':
+                        profit_maximizer = ProfitMaximizer(ticker)
+                        should_sell, _ = profit_maximizer.should_sell(pos.get('entry_price', 0))
+                        if should_sell:
+                            return True
+            except:
+                pass
+            
+            # 기본 청산 조건 (백업)
+            # RSI 75 이상 + 5% 이상 수익 → 익절
             if rsi > 75 and profit_rate >= 5.0:
                 return True
             # 10% 목표 달성
             if profit_rate >= 10.0:
                 return True
             # 거래량 급감 + 수익 중
-            if volume_ratio < 0.8 and profit_rate >= 1.5:
+            if volume_ratio < 0.8 and profit_rate >= 3.0:
+                return True
+            # 손절 (-2%)
+            if profit_rate <= -2.0:
                 return True
             return False
         

@@ -16,6 +16,15 @@ class UpbitClient:
     
     def __init__(self):
         self.upbit = pyupbit.Upbit(UPBIT_ACCESS_KEY, UPBIT_SECRET_KEY)
+        self._access_key = UPBIT_ACCESS_KEY
+        self._secret_key = UPBIT_SECRET_KEY
+    
+    def reinitialize(self, access_key: str, secret_key: str):
+        """API 키 변경 후 재초기화"""
+        self._access_key = access_key
+        self._secret_key = secret_key
+        self.upbit = pyupbit.Upbit(access_key, secret_key)
+        print(f"[UpbitClient] API 키 재설정됨: {access_key[:8]}...")
         
     # ========== 시세 조회 ==========
     
@@ -249,6 +258,27 @@ class UpbitClient:
         except Exception as e:
             print(f"마켓 목록 조회 실패: {e}")
             return []
+    
+    def get_all_tickers(self, fiat: str = "KRW") -> List[str]:
+        """거래량 상위 순으로 정렬된 마켓 코드 목록"""
+        try:
+            tickers = pyupbit.get_tickers(fiat=fiat)
+            
+            # 거래대금 기준 정렬
+            response = requests.get(
+                f"https://api.upbit.com/v1/ticker?markets={','.join(tickers[:100])}",
+                timeout=10
+            )
+            if response.status_code == 200:
+                data = response.json()
+                # 거래대금(acc_trade_price_24h) 기준 정렬
+                sorted_data = sorted(data, key=lambda x: float(x.get('acc_trade_price_24h', 0)), reverse=True)
+                return [item['market'] for item in sorted_data]
+            
+            return tickers
+        except Exception as e:
+            print(f"전체 마켓 조회 실패: {e}")
+            return pyupbit.get_tickers(fiat=fiat) or []
     
     @staticmethod
     def get_ticker_info() -> List[Dict[str, Any]]:

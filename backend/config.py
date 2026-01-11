@@ -24,7 +24,7 @@ RSI_OVERSOLD = 30   # RSI 과매도 기준
 RSI_OVERBOUGHT = 70 # RSI 과매수 기준
 
 # OpenRouter API (AI 분석용 - 직접 연결)
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "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"
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "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"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Supabase (DB) - 빈 문자열인 경우에도 기본값 사용
